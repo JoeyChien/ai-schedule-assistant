@@ -1,17 +1,24 @@
-# AI Schedule Assistant
+# README
 
-An AI-powered scheduling assistant built with:
+This README would normally document whatever steps are necessary to get the
+application up and running.
 
-- LINE Bot
-- Google Calendar API
-- Gemini API
-- n8n
-- Spring Boot
+Things you may want to cover:
 
-## Features
+* Ruby version
 
-- Natural language scheduling
-- Google Calendar integration
-- Habit planning
-- Daily summary
-- AI decision engine
+* System dependencies
+
+* Configuration
+
+* Database creation
+
+* Database initialization
+
+* How to run the test suite
+
+* Services (job queues, cache servers, search engines, etc.)
+
+* Deployment instructions
+
+* ...
