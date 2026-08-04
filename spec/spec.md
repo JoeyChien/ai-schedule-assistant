@@ -141,6 +141,17 @@ Google Calendar
 LINE Reply
 ```
 
+### 實作備註：n8n 實際的角色（v1.0）
+
+上面這張圖是原始規劃，實際 v1.0 的 LINE 建立/修改/刪除/查詢行程（FR-001~004）**沒有經過 n8n**，是 LINE Webhook 直接打 Rails（`LineBotController` → `Schedules::CommandService`），Gemini/Google Calendar 都是 Rails 直接呼叫，理由是這條路徑有撞期檢查、自動排空檔這類需要「讀狀態、寫兩個系統（DB + Google Calendar）」的業務邏輯，用程式碼實作比較可靠，也比較好寫測試。
+
+n8n 實際承擔的是兩個**唯讀、排程觸發**的通知工作流程（不寫入任何資料，只讀 Rails 提供的 API 再推播 LINE），細節見 [docs/n8n_workflows.md](../docs/n8n_workflows.md)：
+
+- 每日行程提醒（FR-009，09:00）
+- 每日摘要（FR-007，23:00，取代原本 Rails 自己排程觸發的方式）
+
+這樣分工同時展示了「核心業務邏輯用程式碼實作＋測試」跟「排程通知類工作流程用 n8n 編排」兩種能力。
+
 ---
 
 # 六、技術架構
@@ -363,19 +374,44 @@ LINE 推播。
 
 ### 實作備註
 
-- 由 `DailySummaryJob` 執行，核心邏輯在 `Schedules::DailySummaryService`。
-- 目前資料模型沒有「完成狀態」欄位，因此用 `end_time <= 現在時間` 當作「已完成」的判斷依據，其餘視為「尚未完成」。
-- 摘要文字交給 Gemini（AI-004）依 `prompts/daily_summary.txt.erb` 產生；若 Gemini 呼叫失敗或回傳空白，會自動退回程式產生的純文字版本，確保每天的推播不會因為 AI 服務問題而整個失敗。
-- 明日建議目前用「固定習慣清單裡，今天還沒排過的第一項」帶出（例如今天沒做「英文」，就建議明天安排英文）。
-- 排程時間對照 `config/recurring.yml` 的 `send_daily_summary`（正式環境 23:00）。
+- **觸發方式（v1.0 調整）**：正式的每天 23:00 觸發改由 n8n 負責（見 [docs/n8n_workflows.md](../docs/n8n_workflows.md) 工作流程 B），不再是 Rails 的 `config/recurring.yml`。n8n 讀 `GET /api/v1/schedules?date=...`，自己呼叫 Gemini 整理摘要、自己呼叫 LINE Push Message API 推播，Rails 端完全不參與。
+- Rails 這邊原本針對 FR-007 寫的 `DailySummaryJob` / `Schedules::DailySummaryService` 程式碼跟測試都還留著（沒有刪除），可以用 `bin/rails runner 'DailySummaryJob.perform_now'` 手動執行，做為「同一個功能不透過 n8n、純 Rails 也能做到」的對照組，但**不會**再被自動排程觸發（避免跟 n8n 重複推播兩次）。
+- 目前資料模型沒有「完成狀態」欄位，因此用 `end_time <= 現在時間` 當作「已完成」的判斷依據，其餘視為「尚未完成」（n8n 版本的摘要邏輯也是採用一樣的判斷方式）。
+- Rails 版本的摘要文字交給 Gemini（AI-004）依 `prompts/daily_summary.txt.erb` 產生；若 Gemini 呼叫失敗或回傳空白，會自動退回程式產生的純文字版本，確保推播不會因為 AI 服務問題而整個失敗。
 
 ---
 
-## FR-006 / FR-007 共通：LINE 主動推播
+## FR-009 每日行程提醒（v1.0 新增，原規格沒有這條）
 
-- 這兩個排程都是系統主動發訊息（不是回覆使用者訊息），走的是 LINE Messaging API 的 **Push Message**，跟 FR-001~004 用的 Reply Message（需要 `reply_token`，且有時效限制）不同，實作在 `Line::WebhookService#push_text`。
-- 推播對象是 `Rails.application.credentials.dig(:line, :user_id)`，需要先跟機器人互動過一次、從 server log 取得 `user_id` 後手動設定（見 README「首次設定」第 4 步）。
-- 正式環境靠 `config/recurring.yml` + Solid Queue 觸發（`SOLID_QUEUE_IN_PUMA`，見 `config/deploy.yml`）；本機開發環境預設不會自動排程，需要用 `bin/rails runner` 手動觸發測試（見 README「測試每日固定行程 / 每日摘要」）。
+每天 09:00
+
+系統：
+
+- 讀取今天的行程
+- 整理成清單
+- LINE 推播
+
+### Output（LINE 推播）
+
+```
+☀️ 早安！今天的安排：
+⏰ 10:00 📌 閱讀
+⏰ 17:00 📌 健身
+⏰ 19:00 📌 看中醫
+```
+
+### 實作備註
+
+- 完全由 n8n 負責（見 [docs/n8n_workflows.md](../docs/n8n_workflows.md) 工作流程 A），Rails 沒有對應的 Job，只提供 `GET /api/v1/schedules?date=YYYY-MM-DD` 這個唯讀 API 給 n8n 讀取當天行程；格式化訊息、推播 LINE 都在 n8n 的節點裡完成。
+- 這條刻意不經過 AI（單純資料轉換），跟 FR-007 一組一起看，展示 n8n 一邊做「純資料流程」、一邊做「串 LLM 的流程」兩種形狀。
+
+---
+
+## FR-007 / FR-009 共通：LINE 主動推播
+
+- 這兩個通知都是系統主動發訊息（不是回覆使用者訊息），走的是 LINE Messaging API 的 **Push Message**，跟 FR-001~004 用的 Reply Message（需要 `reply_token`，且有時效限制）不同。
+- 推播對象是 LINE 的 `user_id`（跟 `credentials.line.user_id` 同一組），取得方式見 README「首次設定」第 4 步；n8n 那邊要另外把同一組 `channel_access_token` / `user_id` 設定成自己的 credential。
+- FR-005/006（每日固定行程）仍由 Rails 的 `config/recurring.yml` + Solid Queue 觸發（`SOLID_QUEUE_IN_PUMA`，見 `config/deploy.yml`），因為那條有撞期檢查、自動排空檔這類業務邏輯，適合留在程式碼裡；FR-007/FR-009 這兩個純通知則交給 n8n。
 
 ---
 

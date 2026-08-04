@@ -1,6 +1,6 @@
 # AI Schedule Assistant
 
-透過 LINE 傳一句話（例如「明天下午五點健身」），由 Gemini 解析意圖後自動操作 Google Calendar 的智慧排程助理。完整規格見 [spec/spec.md](spec/spec.md)。
+透過 LINE 傳一句話（例如「明天下午五點健身」），由 Gemini 解析意圖後自動操作 Google Calendar 的智慧排程助理。核心 CRUD/撞期檢查/自動排空檔都是 Rails 本身處理，兩個每日通知（早上行程提醒、晚上摘要）則是用 n8n 排程串接 Rails API + Gemini + LINE，見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。完整規格見 [spec/spec.md](spec/spec.md)。
 
 ## 環境需求
 
@@ -27,8 +27,9 @@ bin/rails credentials:edit
 # line:
 #   channel_secret: <LINE Channel Secret>
 #   channel_access_token: <LINE Channel Access Token>
-#   user_id: <先存空字串即可，是「每日固定行程通知」「每日摘要推播」(FR-006 / FR-007) 主動推播的對象，
-#             等下面第 4 步跟 LINE Bot 對話過一次、從 server log 拿到 user_id 後再回來補上>
+#   user_id: <先存空字串即可，是 FR-006（每日固定行程通知）跟手動測試 FR-007（DailySummaryJob）主動推播的對象，
+#             等下面第 4 步跟 LINE Bot 對話過一次、從 server log 拿到 user_id 後再回來補上。
+#             n8n 的每日行程提醒/每日摘要(FR-007/FR-009)要另外把同一組 user_id 設定進 n8n，跟這裡無關>
 # google:
 #   client_id: <config/google/credentials.json 裡的 client_id>
 #   client_secret: <config/google/credentials.json 裡的 client_secret>
@@ -80,6 +81,9 @@ curl -X POST http://localhost:3000/api/v1/schedules \
 # 查詢單筆 / 刪除（把 :id 換成上面回傳的 id）
 curl http://localhost:3000/api/v1/schedules/:id
 curl -X DELETE http://localhost:3000/api/v1/schedules/:id
+
+# 只查某一天的行程（給 n8n 的每日工作流程用，見下方「n8n 工作流程」）
+curl "http://localhost:3000/api/v1/schedules?date=2026-08-05"
 ```
 
 ### 3. 測試 AI 解析 + Google Calendar 建立行程（需要 Gemini + Google 憑證都設定好）
@@ -105,16 +109,17 @@ curl -X POST http://localhost:3000/api/v1/schedules/parse \
    - 「把可排程時間改成9點到21點，午休改成12:30到13:30」→ 修改自動排程設定（見下方「自動排程設定」說明）
 4. 第一次跟機器人說話後，server log 會印出 `[LineBotController] message from user_id=Uxxxx...`，把這個值存進 `credentials.line.user_id`，才能收到下面第 5 點的主動推播
 
-### 5. 測試每日固定行程 / 每日摘要（FR-005 / FR-006 / FR-007）
+### 5. 測試每日固定行程（FR-005 / FR-006，Rails 自己的排程）
 
-這兩個功能設計上是每天由排程自動觸發（`config/recurring.yml`，正式環境用 Solid Queue 於 07:00 / 23:00 執行），本機開發環境預設不會啟動 Solid Queue supervisor，所以要測試的話用 console 手動觸發即可：
+這個功能設計上是每天 07:00 由排程自動觸發（`config/recurring.yml`），本機開發環境預設不會啟動 Solid Queue supervisor，所以要測試的話用 console 手動觸發即可：
 
 ```bash
 bin/rails runner 'DailyHabitSchedulingJob.perform_now'  # FR-005/006：找空檔排入「閱讀／散步／英文／冥想」
-bin/rails runner 'DailySummaryJob.perform_now'          # FR-007：整理今天完成/未完成事項 + 明日建議
 ```
 
-需要 Google Calendar 憑證（找空檔、建立事件）與 `credentials.line.user_id`（推播用）都設定好才會真的建立行程、送出 LINE 訊息；若 Gemini 呼叫失敗，`DailySummaryJob` 會自動退回純文字版本的摘要，不會整個推播失敗。
+需要 Google Calendar 憑證（找空檔、建立事件）與 `credentials.line.user_id`（推播用）都設定好才會真的建立行程、送出 LINE 訊息。
+
+> FR-007（每日摘要）原本也是 Rails 排程觸發，v1.0 改成用 n8n 在 23:00 觸發（見下方「n8n 工作流程」）。`DailySummaryJob` 程式碼跟測試都還在，可以照樣手動跑 `bin/rails runner 'DailySummaryJob.perform_now'` 測試，只是不會再被自動排程觸發，避免跟 n8n 重複推播。
 
 ## 自動排程設定（沒指定明確時間的行程要排進哪些空檔）
 
@@ -132,6 +137,15 @@ bin/rails runner 'DailySummaryJob.perform_now'          # FR-007：整理今天�
 
 Gemini 會參考目前的設定值，把你這句話要求的異動跟原本沒提到的部分合併後整個更新，不會把沒提到的部分清空。第一次使用（還沒有人設定過）會自動套用上面的預設值，不需要另外初始化。
 
+## n8n 工作流程（每日行程提醒 / 每日摘要，FR-007 / FR-009）
+
+每天 09:00 的「今日行程提醒」跟 23:00 的「每日摘要」這兩個通知，是用 n8n 排程觸發、呼叫 Rails 的 `GET /api/v1/schedules?date=...` 拿資料，摘要的部分再呼叫 Gemini，最後直接呼叫 LINE Push Message API 推播——Rails 完全不參與這兩個通知的觸發跟發送，只單純提供唯讀資料。
+
+完整的節點設定（HTTP Request / Code node 的程式碼）見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。之所以這樣分工：
+
+- FR-005/006（找空檔自動排行程）留在 Rails，因為需要撞期檢查、空檔演算法這類「有狀態的業務邏輯」，比較適合寫程式碼、也比較好寫測試。
+- FR-007/FR-009 這兩個單純「排程 → 讀資料 → （呼叫 AI）→ 推播」的通知，交給 n8n 編排，展示用 workflow 工具串接既有 API + LLM + 通訊軟體的能力。
+
 ## 常用維運指令
 
 ```bash
@@ -148,6 +162,7 @@ RAILS_ENV=test bin/rails db:migrate  # 測試資料庫也要套用
 - [x] FR-002 修改行程
 - [x] FR-003 刪除行程
 - [x] FR-004 查詢行程（LINE，`/api/v1/schedules/parse` 目前只走建立流程，未接 QUERY）
-- [x] FR-005 / FR-006 每日固定行程自動排空檔（`DailyHabitSchedulingJob`，每天 07:00）
-- [x] FR-007 每日摘要推播（`DailySummaryJob`，每天 23:00）
+- [x] FR-005 / FR-006 每日固定行程自動排空檔（`DailyHabitSchedulingJob`，每天 07:00，Rails 排程）
+- [x] FR-007 每日摘要推播（每天 23:00，v1.0 改由 n8n 觸發，見 [docs/n8n_workflows.md](docs/n8n_workflows.md)；Rails 版 `DailySummaryJob` 仍保留供手動測試）
 - [x] FR-008 自動排程設定（v1.0 追加）：沒給明確時間的行程自動找空檔排入，空檔範圍（可排程時間 + 排除時段）可以直接用 LINE 對話修改
+- [x] FR-009 每日行程提醒（v1.0 追加）：每天 09:00 由 n8n 觸發，列出當天行程並推播到 LINE

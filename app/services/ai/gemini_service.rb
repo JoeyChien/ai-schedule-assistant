@@ -43,7 +43,7 @@ module Ai
     private
 
     def api_url
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=#{@api_key}"
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=#{@api_key}"
     end
   end
 end

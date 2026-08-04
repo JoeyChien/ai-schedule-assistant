@@ -17,7 +17,7 @@ production:
   schedule_daily_habits:
     class: DailyHabitSchedulingJob
     schedule: at 7am every day
-  # FR-007：每天晚上整理完成／未完成事項與明日建議，推播到 LINE
-  send_daily_summary:
-    class: DailySummaryJob
-    schedule: at 11pm every day
+  # FR-007（每天晚上整理完成／未完成事項與明日建議，推播到 LINE）改由 n8n 在 23:00 觸發，
+  # 見 docs/n8n_workflows.md。DailySummaryJob／DailySummaryService 程式碼還在、也還有測試，
+  # 只是不再由 Rails 自動排程觸發，避免跟 n8n 重複推播；要單獨測試可以手動
+  # bin/rails runner 'DailySummaryJob.perform_now' 執行。

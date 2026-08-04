@@ -1,10 +1,15 @@
 module Api
   module V1
     class SchedulesController < ApplicationController
+      # date 是給 n8n 這類外部排程呼叫用的，例如 ?date=2026-08-05 只回傳當天的行程；
+      # 沒帶 date 就維持原本「回傳全部」的行為
       def index
         schedules = Schedule.order(start_time: :asc)
+        schedules = schedules.on_date(Date.parse(params[:date])) if params[:date].present?
 
         render json: schedules
+      rescue ArgumentError
+        render json: { error: "date 格式錯誤，請用 YYYY-MM-DD" }, status: :bad_request
       end
 
 
