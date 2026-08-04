@@ -229,6 +229,19 @@ Google Calendar 新增：
 | --- | --- |
 | 健身 | Tomorrow 17:00 |
 
+### 實作備註：撞期檢查
+
+- 建立前會先檢查這個時間區間跟現有行程（本地 DB）有沒有重疊，若有撞期（例如「看中醫」剛好也排在 19:00-19:30，這時使用者又說「今天晚上做伸展30分」，時間都落在 19:00-19:30），系統會**拒絕建立**、回覆撞到哪個行程，請使用者自己換時間，不會自動疊加或幫忙搬移。實作在 `Schedules::ConflictChecker`。
+
+### 實作備註：沒給明確時間時自動找空檔排入
+
+- 使用者的訊息如果只給模糊時段或完全沒提時間（例如「今天晚上做伸展30分」，只有「晚上」沒有明確時間點），Gemini 會回傳 `time_specified: false`，這時系統**不會用一個猜測出來的時間點建立行程**，而是改用 `Schedules::CreationService#auto_schedule` 在「自動排程設定」（見下方「自動排程設定」章節）允許的空檔範圍內，找一個排得下、也不會跟其他行程撞期的位置：
+  1. 若訊息裡有提到模糊時段（早上/中午/下午/晚上），優先在該時段對應的範圍內找空檔（例如「晚上」對應 18:00 到可排程時間的結束）。
+  2. 該時段內排不下，退回整個「可排程時間」（預設 10:00-22:00）重新找位置。
+  3. 兩種情況都排不下，就回覆「今天沒有空檔可以排＜行程名稱＞了，麻煩指定明確時間」，不會硬塞或跳過檢查。
+- 空檔判斷跟撞期檢查一樣是讀 Google Calendar 的忙碌時段（`Schedules::FreeSlotFinder`），所以已經寫進 Google Calendar 的行程（不管是這個系統建立的還是使用者手動加的）都會被正確避開。
+- 排定後的回覆會明確告知「已幫您找空檔安排」，讓使用者知道這個時間是系統自動找的，不是他自己指定的。
+
 ---
 
 ## FR-002 修改行程
@@ -243,6 +256,10 @@ Google Calendar 新增：
 - 搜尋今日健身
 - 更新時間
 - 回覆成功
+
+### 實作備註：撞期檢查
+
+- 跟 FR-001 一樣會先做撞期檢查（排除自己原本的時段），改到的新時間跟其他行程重疊時一樣拒絕修改、請使用者換時間。
 
 ---
 
@@ -324,7 +341,7 @@ AI：
 ### 實作備註
 
 - 由 `DailyHabitSchedulingJob` 執行，核心邏輯在 `Schedules::HabitSchedulingService`：
-  1. `Schedules::FreeSlotFinder` 呼叫 `GoogleCalendarService#find_free_busy` 取得當天 08:00–22:00 的忙碌時段，算出空檔。
+  1. `Schedules::FreeSlotFinder` 呼叫 `GoogleCalendarService#find_free_busy`，在 `SchedulingPreference.current` 設定的「可排程時間」（預設 10:00–22:00，已扣掉「排除時段」如午休/晚餐）內找當天的忙碌時段，算出空檔。這份設定跟 FR-001/FR-008 共用，改一次兩邊都會生效。
   2. 依序把「閱讀 30 分 / 散步 30 分 / 英文 30 分 / 冥想 15 分」塞進空檔（今天已經有同名行程就跳過；空檔不夠長也會跳過）。
   3. 成功建立的行程會同時寫入 Google Calendar 與本地 DB（`source: "habit_auto"`），並透過 LINE Push Message 通知結果（含跳過的項目與原因）。
 - 固定習慣清單目前是程式常數 `Schedules::HabitSchedulingService::DAILY_HABITS`（寫死在程式碼），還沒有做十一、資料模型章節的 `Habit` 資料表 —— 那屬於 Roadmap v1.5「Habit Management」的範圍。
@@ -359,6 +376,40 @@ LINE 推播。
 - 這兩個排程都是系統主動發訊息（不是回覆使用者訊息），走的是 LINE Messaging API 的 **Push Message**，跟 FR-001~004 用的 Reply Message（需要 `reply_token`，且有時效限制）不同，實作在 `Line::WebhookService#push_text`。
 - 推播對象是 `Rails.application.credentials.dig(:line, :user_id)`，需要先跟機器人互動過一次、從 server log 取得 `user_id` 後手動設定（見 README「首次設定」第 4 步）。
 - 正式環境靠 `config/recurring.yml` + Solid Queue 觸發（`SOLID_QUEUE_IN_PUMA`，見 `config/deploy.yml`）；本機開發環境預設不會自動排程，需要用 `bin/rails runner` 手動觸發測試（見 README「測試每日固定行程 / 每日摘要」）。
+
+---
+
+## FR-008 自動排程設定（v1.0 新增，原規格沒有這條，因應實際使用需求追加）
+
+### 背景
+
+FR-001（建立行程）跟 FR-006（每日固定行程）都有「沒給明確時間，需要系統自動找空檔排入」的情境。這個空檔範圍原本是寫死在程式裡，但不同人生活作息不同（幾點吃午餐、幾點算晚上），所以拉出一份可以透過 LINE 對話調整的設定。
+
+### Input
+
+> 把可排程時間改成9點到21點，午休改成12:30到13:30
+> 
+
+系統：
+
+- 讀取目前的自動排程設定
+- 依 Gemini 判斷這句話要異動的部分，跟原本設定合併成新的完整設定
+- 存檔、回覆新的設定內容
+
+### Output（LINE 回覆）
+
+```
+✅ 已更新自動排程設定：
+🕐 可排程時間：09:00-21:00
+🚫 排除時段：12:30-13:30、18:00-19:00
+```
+
+### 實作備註
+
+- 設定存在 `SchedulingPreference` 資料表，單一使用者的個人助理只會有一筆（`SchedulingPreference.current`，沒有就自動用預設值建立：可排程時間 10:00-22:00，排除 12:00-13:00 與 18:00-19:00）。
+- 因為使用者一句話可能只想改其中一部分（例如只改午休時間），Gemini 會在 prompt 裡先拿到「目前的設定」當作上下文，回傳**合併後的完整設定**，Rails 端不用自己做欄位層級的差異比對，直接整組覆寫即可（`Schedules::ScheduleSettingsService`）。
+- 格式不合法（例如時間不是 `HH:MM`）會擋在 Model 驗證（`SchedulingPreference`），回覆使用者「設定格式不太對」，不會存進一半的髒資料。
+- `Schedules::FreeSlotFinder` 統一吃「可排程時間 + 排除時段 + Google Calendar 忙碌時段」三種輸入算空檔，FR-001 的自動排程跟 FR-006 的每日固定行程都共用同一份 `SchedulingPreference`，改一次設定兩邊都會生效。
 
 ---
 
@@ -469,6 +520,18 @@ Deadline
 | category | String |
 | source | String |
 | createdAt | DateTime |
+
+---
+
+## SchedulingPreference（v1.0 新增，FR-008）
+
+> 單一使用者的個人助理，只會有一筆，透過 `SchedulingPreference.current` 存取（沒有就自動用預設值建立）。
+
+| Field | Type | 說明 |
+| --- | --- | --- |
+| window_start | String | 可排程時間起點，格式 `HH:MM`，預設 `10:00` |
+| window_end | String | 可排程時間終點，格式 `HH:MM`，預設 `22:00` |
+| excluded_ranges | jsonb | 要排除的固定時段陣列，例如 `[{"start":"12:00","end":"13:00"},{"start":"18:00","end":"19:00"}]` |
 
 ---
 

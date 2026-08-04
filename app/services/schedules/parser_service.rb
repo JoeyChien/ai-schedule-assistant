@@ -20,7 +20,8 @@ module Schedules
       Ai::PromptBuilder.render(
         "intent_parser",
         message: message,
-        date: Date.current
+        date: Date.current,
+        scheduling_preference: SchedulingPreference.current
       )
     end
   end

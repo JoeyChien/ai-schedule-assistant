@@ -67,6 +67,61 @@ class Schedules::CommandServiceTest < ActiveSupport::TestCase
     assert_includes result.reply_text, "沒有安排"
   end
 
+  test "CREATE with a conflicting time replies with the conflict message instead of double-booking" do
+    Schedule.create!(title: "看中醫", start_time: Time.zone.parse("2026-08-04T19:00"), end_time: Time.zone.parse("2026-08-04T19:30"))
+    intent = ParsedIntent.new(
+      action: "CREATE",
+      title: "做伸展",
+      start_time: Time.zone.parse("2026-08-04T19:00"),
+      end_time: Time.zone.parse("2026-08-04T19:30")
+    )
+    calendar = FakeGoogleCalendarService.new
+
+    result = build_service(intent: intent, calendar: calendar).call("今天晚上做伸展30分")
+
+    assert_includes result.reply_text, "看中醫"
+    assert_includes result.reply_text, "撞期"
+    assert_nil result.schedule
+    assert_empty calendar.calls
+  end
+
+  test "CREATE without an explicit time auto-schedules into a free slot and says so in the reply" do
+    intent = ParsedIntent.new(action: "CREATE", title: "做伸展", time_specified: false, duration_minutes: 30, date: "2026-08-04", preferred_period: "evening")
+
+    result = build_service(intent: intent).call("今天晚上做伸展30分")
+
+    assert_includes result.reply_text, "幫您找空檔安排"
+    assert_includes result.reply_text, "做伸展"
+    # 晚上時段是 18:00-22:00，扣掉預設的晚餐排除時段 18:00-19:00 後，第一個空檔是 19:00
+    assert_equal Time.zone.parse("2026-08-04T19:00"), result.schedule.start_time
+  end
+
+  test "CREATE without an explicit time replies with a clear message when there's no room left" do
+    calendar = FakeGoogleCalendarService.new
+    calendar.busy_periods = [ FakeGoogleCalendarService::FakeBusyPeriod.new(Time.zone.parse("2026-08-04T10:00"), Time.zone.parse("2026-08-04T22:00")) ]
+    intent = ParsedIntent.new(action: "CREATE", title: "冥想", time_specified: false, duration_minutes: 15, date: "2026-08-04")
+
+    result = build_service(intent: intent, calendar: calendar).call("今天找空檔冥想15分")
+
+    assert_includes result.reply_text, "沒有空檔"
+    assert_nil result.schedule
+  end
+
+  test "UPDATE_SCHEDULE_SETTINGS updates the shared preference and confirms the new window" do
+    intent = ParsedIntent.new(
+      action: "UPDATE_SCHEDULE_SETTINGS",
+      window_start: "09:00",
+      window_end: "21:00",
+      excluded_ranges: [ { "start" => "12:30", "end" => "13:30" } ]
+    )
+
+    result = build_service(intent: intent).call("把可排程時間改成9點到21點，午休改成12:30到13:30")
+
+    assert_includes result.reply_text, "09:00-21:00"
+    assert_includes result.reply_text, "12:30-13:30"
+    assert_equal "09:00", SchedulingPreference.current.window_start
+  end
+
   test "unrecognized action replies with an unsupported message" do
     intent = ParsedIntent.new(action: "FIND_FREE_TIME", title: nil)
 

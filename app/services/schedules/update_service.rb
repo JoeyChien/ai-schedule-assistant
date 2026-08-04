@@ -9,6 +9,8 @@ module Schedules
       new_start_time = parsed_intent.start_time
       new_end_time = parsed_intent.end_time || new_start_time + 1.hour
 
+      ConflictChecker.check!(new_start_time, new_end_time, exclude_id: schedule.id)
+
       @calendar.update_event(
         schedule.google_event_id,
         summary: parsed_intent.title,

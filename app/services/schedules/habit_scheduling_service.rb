@@ -24,7 +24,13 @@ module Schedules
 
       return Result.new(scheduled: scheduled, skipped: skipped) if pending_habits.empty?
 
-      slots = @free_slot_finder.free_slots(date: date)
+      preference = SchedulingPreference.current
+      slots = @free_slot_finder.free_slots(
+        date: date,
+        window_start: preference.window_start,
+        window_end: preference.window_end,
+        excluded_ranges: preference.excluded_ranges
+      )
 
       pending_habits.each do |habit|
         slot_index = slots.find_index { |slot| (slot.end - slot.begin) >= habit[:duration_minutes].minutes }

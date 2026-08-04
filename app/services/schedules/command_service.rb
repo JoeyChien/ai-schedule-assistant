@@ -9,13 +9,15 @@ module Schedules
       creation_service: CreationService.new,
       update_service: UpdateService.new,
       deletion_service: DeletionService.new,
-      query_service: QueryService.new
+      query_service: QueryService.new,
+      schedule_settings_service: ScheduleSettingsService.new
     )
       @parser = parser
       @creation_service = creation_service
       @update_service = update_service
       @deletion_service = deletion_service
       @query_service = query_service
+      @schedule_settings_service = schedule_settings_service
     end
 
     def call(message)
@@ -24,7 +26,8 @@ module Schedules
       case parsed_intent.action
       when "CREATE"
         schedule = @creation_service.create(parsed_intent)
-        Result.new(reply_text: created_reply(schedule), schedule: schedule)
+        reply = parsed_intent.needs_auto_schedule? ? auto_scheduled_reply(schedule) : created_reply(schedule)
+        Result.new(reply_text: reply, schedule: schedule)
       when "UPDATE"
         schedule = @update_service.update(parsed_intent)
         Result.new(reply_text: updated_reply(schedule), schedule: schedule)
@@ -34,6 +37,9 @@ module Schedules
       when "QUERY"
         schedules = @query_service.call(parsed_intent)
         Result.new(reply_text: query_reply(schedules), schedule: nil)
+      when "UPDATE_SCHEDULE_SETTINGS"
+        preference = @schedule_settings_service.update(parsed_intent)
+        Result.new(reply_text: settings_reply(preference), schedule: nil)
       else
         Result.new(reply_text: unsupported_reply, schedule: nil)
       end
@@ -45,6 +51,12 @@ module Schedules
       Result.new(reply_text: ai_unavailable_reply, schedule: nil)
     rescue Finder::NotFound => e
       Result.new(reply_text: e.message, schedule: nil)
+    rescue ConflictChecker::ConflictError => e
+      Result.new(reply_text: e.message, schedule: nil)
+    rescue CreationService::NoFreeSlotError => e
+      Result.new(reply_text: e.message, schedule: nil)
+    rescue ScheduleSettingsService::InvalidSettingsError => e
+      Result.new(reply_text: e.message, schedule: nil)
     rescue GoogleCalendarService::Error => e
       Rails.logger.error("[Schedules::CommandService] #{e.message}")
       Result.new(reply_text: calendar_error_reply, schedule: nil)
@@ -54,6 +66,10 @@ module Schedules
 
     def created_reply(schedule)
       "✅ 已為您安排行程：\n📌 #{schedule.title}\n⏰ #{format_time(schedule.start_time)}"
+    end
+
+    def auto_scheduled_reply(schedule)
+      "✅ 已幫您找空檔安排：\n📌 #{schedule.title}\n⏰ #{format_time(schedule.start_time)}-#{schedule.end_time.strftime('%H:%M')}"
     end
 
     def updated_reply(schedule)
@@ -69,6 +85,13 @@ module Schedules
 
       lines = schedules.map { |s| "⏰ #{format_time(s.start_time)} 📌 #{s.title}" }
       "📅 目前的安排：\n#{lines.join("\n")}"
+    end
+
+    def settings_reply(preference)
+      excluded = preference.excluded_ranges.map { |r| "#{r['start']}-#{r['end']}" }.join("、")
+      excluded = "無" if excluded.blank?
+
+      "✅ 已更新自動排程設定：\n🕐 可排程時間：#{preference.window_start}-#{preference.window_end}\n🚫 排除時段：#{excluded}"
     end
 
     def unsupported_reply

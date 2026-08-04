@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_04_040215) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_04_083918) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -25,5 +25,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_04_040215) do
     t.string "title"
     t.datetime "updated_at", null: false
     t.index ["google_event_id"], name: "index_schedules_on_google_event_id"
+  end
+
+  create_table "scheduling_preferences", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.jsonb "excluded_ranges", default: [{"end" => "13:00", "start" => "12:00"}, {"end" => "19:00", "start" => "18:00"}], null: false
+    t.datetime "updated_at", null: false
+    t.string "window_end", default: "22:00", null: false
+    t.string "window_start", default: "10:00", null: false
   end
 end

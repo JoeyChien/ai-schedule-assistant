@@ -9,19 +9,32 @@ module Schedules
     end
 
     # 回傳空檔陣列，每個元素為排他 Range（start_time...end_time）
-    def free_slots(date:, window_start: DEFAULT_WINDOW_START, window_end: DEFAULT_WINDOW_END)
+    # excluded_ranges：額外要排除的固定時段（例如午休、晚餐），格式為 [{ "start" => "12:00", "end" => "13:00" }, ...]
+    def free_slots(date:, window_start: DEFAULT_WINDOW_START, window_end: DEFAULT_WINDOW_END, excluded_ranges: [])
       window_open = time_on(date, window_start)
       window_close = time_on(date, window_end)
+      window = window_open...window_close
 
-      busy_periods = @calendar.find_free_busy(window_open, window_close)
-                               .map { |period| clip(period.start.to_time...period.end.to_time, window_open...window_close) }
-                               .compact
-                               .sort_by(&:begin)
+      busy_from_calendar = @calendar.find_free_busy(window_open, window_close)
+                                     .map { |period| period.start.to_time...period.end.to_time }
 
-      subtract(window_open...window_close, busy_periods)
+      busy_from_exclusions = excluded_ranges.map do |range|
+        time_on(date, range_value(range, :start))...time_on(date, range_value(range, :end))
+      end
+
+      busy_periods = (busy_from_calendar + busy_from_exclusions)
+                       .map { |period| clip(period, window) }
+                       .compact
+                       .sort_by(&:begin)
+
+      subtract(window, busy_periods)
     end
 
     private
+
+    def range_value(range, key)
+      range[key] || range[key.to_s]
+    end
 
     def time_on(date, hhmm)
       hour, minute = hhmm.split(":").map(&:to_i)

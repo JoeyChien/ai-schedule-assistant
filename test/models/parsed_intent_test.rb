@@ -45,4 +45,63 @@ class ParsedIntentTest < ActiveSupport::TestCase
       assert_equal Date.current.end_of_day, intent.query_range.end
     end
   end
+
+  test "from_hash carries time_specified/duration_minutes/date through for CREATE without an explicit time" do
+    intent = ParsedIntent.from_hash(
+      "action" => "CREATE",
+      "title" => "做伸展",
+      "time_specified" => false,
+      "start_time" => "",
+      "end_time" => "",
+      "duration_minutes" => 30,
+      "date" => "2026-08-04",
+      "location" => ""
+    )
+
+    assert intent.needs_auto_schedule?
+    assert_equal 30.minutes, intent.requested_duration
+    assert_equal Date.new(2026, 8, 4), intent.target_date
+  end
+
+  test "time_specified? defaults to true when Gemini omits the field, so old-style intents don't trigger auto-schedule" do
+    intent = ParsedIntent.new(action: "CREATE", title: "健身", start_time: Time.zone.now)
+
+    assert intent.time_specified?
+    assert_not intent.needs_auto_schedule?
+  end
+
+  test "needs_auto_schedule? is false for non-CREATE actions even without time_specified" do
+    intent = ParsedIntent.new(action: "QUERY", time_specified: false)
+
+    assert_not intent.needs_auto_schedule?
+  end
+
+  test "requested_duration defaults to 60 minutes when duration_minutes is missing" do
+    intent = ParsedIntent.new(action: "CREATE", time_specified: false)
+
+    assert_equal 60.minutes, intent.requested_duration
+  end
+
+  test "target_date falls back to start_time's date, then today, when date is missing" do
+    intent = ParsedIntent.new(action: "CREATE", start_time: Time.zone.parse("2026-08-05T17:00:00+08:00"))
+    assert_equal Date.new(2026, 8, 5), intent.target_date
+
+    travel_to Time.zone.parse("2026-08-04T12:00:00+08:00") do
+      assert_equal Date.current, ParsedIntent.new(action: "CREATE").target_date
+    end
+  end
+
+  test "from_hash builds an UPDATE_SCHEDULE_SETTINGS intent" do
+    intent = ParsedIntent.from_hash(
+      "action" => "UPDATE_SCHEDULE_SETTINGS",
+      "window_start" => "09:00",
+      "window_end" => "21:00",
+      "excluded_ranges" => [ { "start" => "12:30", "end" => "13:30" } ]
+    )
+
+    assert intent.update_schedule_settings?
+    assert_equal "09:00", intent.window_start
+    assert_equal "21:00", intent.window_end
+    assert_equal [ { "start" => "12:30", "end" => "13:30" } ], intent.excluded_ranges
+  end
 end
