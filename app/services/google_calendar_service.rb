@@ -7,8 +7,8 @@ class GoogleCalendarService
   CALENDAR_ID = "primary"
   MAX_ATTEMPTS = 3
 
-  def initialize
-    @calendar = Google::Apis::CalendarV3::CalendarService.new
+  def initialize(client: Google::Apis::CalendarV3::CalendarService.new)
+    @calendar = client
     @calendar.authorization = authorize
   end
 
@@ -40,7 +40,7 @@ class GoogleCalendarService
       items: [ { id: CALENDAR_ID } ]
     )
 
-    response = with_retries { @calendar.query_free_busy(request) }
+    response = with_retries { @calendar.query_freebusy(request) }
     response.calendars[CALENDAR_ID].busy # 回傳忙碌時段列表
   end
 

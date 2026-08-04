@@ -1,6 +1,10 @@
 require "test_helper"
 
 class Schedules::CommandServiceTest < ActiveSupport::TestCase
+  # 固定在測試日期（2026-08-04/05）之前，這樣「今天不能排過去時間」的邏輯不會影響這些測試
+  setup { travel_to(Time.zone.parse("2026-08-01T09:00:00+08:00")) }
+  teardown { travel_back }
+
   FakeParser = Struct.new(:intent) do
     def parse(_message) = intent
   end
@@ -15,7 +19,8 @@ class Schedules::CommandServiceTest < ActiveSupport::TestCase
       parser: FakeParser.new(intent),
       creation_service: Schedules::CreationService.new(calendar: calendar),
       update_service: Schedules::UpdateService.new(calendar: calendar),
-      deletion_service: Schedules::DeletionService.new(calendar: calendar)
+      deletion_service: Schedules::DeletionService.new(calendar: calendar),
+      bulk_schedule_service: Schedules::BulkScheduleService.new(calendar: calendar)
     )
   end
 
@@ -123,11 +128,64 @@ class Schedules::CommandServiceTest < ActiveSupport::TestCase
   end
 
   test "unrecognized action replies with an unsupported message" do
-    intent = ParsedIntent.new(action: "FIND_FREE_TIME", title: nil)
+    intent = ParsedIntent.new(action: "SOMETHING_GEMINI_MADE_UP", title: nil)
 
-    result = build_service(intent: intent).call("幫我找空檔")
+    result = build_service(intent: intent).call("...")
 
     assert_includes result.reply_text, "開發中"
+  end
+
+  test "FIND_FREE_TIME schedules multiple occurrences across the requested range and replies with a summary" do
+    intent = ParsedIntent.new(
+      action: "FIND_FREE_TIME",
+      title: "閱讀",
+      occurrences: 2,
+      duration_minutes: 60,
+      range_start: "2026-08-04",
+      range_end: "2026-08-05"
+    )
+
+    result = build_service(intent: intent).call("這週找時間安排兩次閱讀1小時")
+
+    assert_includes result.reply_text, "已幫您安排 2/2 次「閱讀」"
+    assert_equal 2, Schedule.where(title: "閱讀").count
+  end
+
+  test "FIND_FREE_TIME requested late at night never schedules something already in the past (the reported bug)" do
+    travel_to(Time.zone.parse("2026-08-04T22:00:00+08:00")) do
+      intent = ParsedIntent.new(
+        action: "FIND_FREE_TIME",
+        title: "閱讀",
+        occurrences: 2,
+        duration_minutes: 60,
+        range_start: "2026-08-04",
+        range_end: "2026-08-09"
+      )
+
+      result = build_service(intent: intent).call("在這週找時間安排兩次閱讀1小時")
+
+      assert_includes result.reply_text, "已幫您安排 2/2 次「閱讀」"
+      schedules = Schedule.where(title: "閱讀").order(:start_time)
+      assert_equal [ Date.new(2026, 8, 5), Date.new(2026, 8, 6) ], schedules.map { |s| s.start_time.to_date }
+    end
+  end
+
+  test "FIND_FREE_TIME reports how many occurrences it couldn't fit" do
+    calendar = FakeGoogleCalendarService.new
+    calendar.busy_periods = [ FakeGoogleCalendarService::FakeBusyPeriod.new(Time.zone.parse("2026-08-04T10:00"), Time.zone.parse("2026-08-04T22:00")) ]
+    intent = ParsedIntent.new(
+      action: "FIND_FREE_TIME",
+      title: "閱讀",
+      occurrences: 2,
+      duration_minutes: 60,
+      range_start: "2026-08-04",
+      range_end: "2026-08-04"
+    )
+
+    result = build_service(intent: intent, calendar: calendar).call("今天找時間安排兩次閱讀1小時")
+
+    assert_includes result.reply_text, "剩下 2 次"
+    assert_equal 0, Schedule.where(title: "閱讀").count
   end
 
   test "a Gemini parsing error replies with the spec's guidance message" do

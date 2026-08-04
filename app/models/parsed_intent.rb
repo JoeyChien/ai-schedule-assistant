@@ -15,7 +15,10 @@ class ParsedIntent
                 :preferred_period,
                 :window_start,
                 :window_end,
-                :excluded_ranges
+                :excluded_ranges,
+                :occurrences,
+                :range_start,
+                :range_end
 
   def self.from_hash(hash)
     new(
@@ -30,7 +33,10 @@ class ParsedIntent
       preferred_period: hash["preferred_period"].presence,
       window_start: hash["window_start"].presence,
       window_end: hash["window_end"].presence,
-      excluded_ranges: hash["excluded_ranges"].presence
+      excluded_ranges: hash["excluded_ranges"].presence,
+      occurrences: hash["occurrences"].presence&.to_i,
+      range_start: hash["range_start"].presence,
+      range_end: hash["range_end"].presence
     )
   end
 
@@ -88,10 +94,23 @@ class ParsedIntent
 
   # QUERY 的查詢區間；Gemini 沒給時間時預設查今天
   def query_range
-    range_start = (start_time || Time.zone.now).beginning_of_day
-    range_end = (end_time || start_time || Time.zone.now).end_of_day
+    query_begin = (start_time || Time.zone.now).beginning_of_day
+    query_end = (end_time || start_time || Time.zone.now).end_of_day
 
-    range_start..range_end
+    query_begin..query_end
+  end
+
+  # FIND_FREE_TIME 要排幾次；沒給就當作 1 次
+  def requested_occurrences
+    occurrences || 1
+  end
+
+  # FIND_FREE_TIME 搜尋空檔的日期範圍；Gemini 沒給時間時預設只搜今天
+  def schedule_range
+    range_from = range_start.present? ? Date.parse(range_start) : Date.current
+    range_to = range_end.present? ? Date.parse(range_end) : range_from
+
+    range_from..range_to
   end
 
   def to_schedule_attributes

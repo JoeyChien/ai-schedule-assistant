@@ -107,14 +107,16 @@ curl -X POST http://localhost:3000/api/v1/schedules/parse \
    - 如果新增/修改的時間跟既有行程撞期（時間區間有重疊），系統會拒絕建立/修改，回覆哪個行程撞到、請你換個時間，不會直接把兩個行程疊在同一個時段
    - 「今天晚上做伸展30分」→ 沒有給明確時間點，系統會自動在「自動排程設定」的空檔範圍內找位置安排（優先排在你講的時段，例如「晚上」；找不到空檔會直接告訴你，不會硬塞）
    - 「把可排程時間改成9點到21點，午休改成12:30到13:30」→ 修改自動排程設定（見下方「自動排程設定」說明）
+   - 「這週找時間安排兩次閱讀1小時」→ FR-005：一次排多個、跨天找空檔（判斷依據是有沒有提到「幾次」或一個範圍如「這週」，只排一次的還是走上面的自動排空檔）；如果整個範圍都排不滿，回覆會明講排了幾次、還差幾次。也支援「下週」（下週一到下週日整週）
+   - 找空檔一律不會排到已經過去的時間；如果是排今天，也會自動避開「現在往後 1 小時內」，避免排一個來不及準備、甚至已經過去的時間點
 4. 第一次跟機器人說話後，server log 會印出 `[LineBotController] message from user_id=Uxxxx...`，把這個值存進 `credentials.line.user_id`，才能收到下面第 5 點的主動推播
 
-### 5. 測試每日固定行程（FR-005 / FR-006，Rails 自己的排程）
+### 5. 測試每日固定行程（FR-006，Rails 自己的排程）
 
 這個功能設計上是每天 07:00 由排程自動觸發（`config/recurring.yml`），本機開發環境預設不會啟動 Solid Queue supervisor，所以要測試的話用 console 手動觸發即可：
 
 ```bash
-bin/rails runner 'DailyHabitSchedulingJob.perform_now'  # FR-005/006：找空檔排入「閱讀／散步／英文／冥想」
+bin/rails runner 'DailyHabitSchedulingJob.perform_now'  # FR-006：找空檔排入「閱讀／散步／英文／冥想」
 ```
 
 需要 Google Calendar 憑證（找空檔、建立事件）與 `credentials.line.user_id`（推播用）都設定好才會真的建立行程、送出 LINE 訊息。
@@ -123,7 +125,7 @@ bin/rails runner 'DailyHabitSchedulingJob.perform_now'  # FR-005/006：找空檔
 
 ## 自動排程設定（沒指定明確時間的行程要排進哪些空檔）
 
-當你說「今天晚上做伸展30分」這種**沒有給明確時間點**的行程，或是每天早上 07:00 自動排的固定習慣（FR-006），系統都是依照同一份「自動排程設定」（`SchedulingPreference`，資料庫裡只會有一筆）決定可以排進哪些空檔：
+當你說「今天晚上做伸展30分」這種**沒有給明確時間點**的行程、「這週找時間安排兩次閱讀1小時」這種**一次排多次**的行程（FR-005），或是每天早上 07:00 自動排的固定習慣（FR-006），系統都是依照同一份「自動排程設定」（`SchedulingPreference`，資料庫裡只會有一筆）決定可以排進哪些空檔：
 
 - **可排程時間**：預設 10:00-22:00
 - **排除時段**：預設排除 12:00-13:00（午休）與 18:00-19:00（晚餐）
@@ -162,7 +164,8 @@ RAILS_ENV=test bin/rails db:migrate  # 測試資料庫也要套用
 - [x] FR-002 修改行程
 - [x] FR-003 刪除行程
 - [x] FR-004 查詢行程（LINE，`/api/v1/schedules/parse` 目前只走建立流程，未接 QUERY）
-- [x] FR-005 / FR-006 每日固定行程自動排空檔（`DailyHabitSchedulingJob`，每天 07:00，Rails 排程）
+- [x] FR-005 AI 安排固定習慣（LINE 對話一次要求排多次、跨天找空檔，例如「這週找時間安排兩次閱讀1小時」）
+- [x] FR-006 每日固定行程自動排空檔（`DailyHabitSchedulingJob`，每天 07:00，Rails 排程）
 - [x] FR-007 每日摘要推播（每天 23:00，v1.0 改由 n8n 觸發，見 [docs/n8n_workflows.md](docs/n8n_workflows.md)；Rails 版 `DailySummaryJob` 仍保留供手動測試）
 - [x] FR-008 自動排程設定（v1.0 追加）：沒給明確時間的行程自動找空檔排入，空檔範圍（可排程時間 + 排除時段）可以直接用 LINE 對話修改
 - [x] FR-009 每日行程提醒（v1.0 追加）：每天 09:00 由 n8n 觸發，列出當天行程並推播到 LINE

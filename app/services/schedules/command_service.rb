@@ -10,7 +10,8 @@ module Schedules
       update_service: UpdateService.new,
       deletion_service: DeletionService.new,
       query_service: QueryService.new,
-      schedule_settings_service: ScheduleSettingsService.new
+      schedule_settings_service: ScheduleSettingsService.new,
+      bulk_schedule_service: BulkScheduleService.new
     )
       @parser = parser
       @creation_service = creation_service
@@ -18,6 +19,7 @@ module Schedules
       @deletion_service = deletion_service
       @query_service = query_service
       @schedule_settings_service = schedule_settings_service
+      @bulk_schedule_service = bulk_schedule_service
     end
 
     def call(message)
@@ -40,6 +42,9 @@ module Schedules
       when "UPDATE_SCHEDULE_SETTINGS"
         preference = @schedule_settings_service.update(parsed_intent)
         Result.new(reply_text: settings_reply(preference), schedule: nil)
+      when "FIND_FREE_TIME"
+        result = @bulk_schedule_service.call(parsed_intent)
+        Result.new(reply_text: bulk_scheduled_reply(parsed_intent, result), schedule: nil)
       else
         Result.new(reply_text: unsupported_reply, schedule: nil)
       end
@@ -85,6 +90,14 @@ module Schedules
 
       lines = schedules.map { |s| "⏰ #{format_time(s.start_time)} 📌 #{s.title}" }
       "📅 目前的安排：\n#{lines.join("\n")}"
+    end
+
+    def bulk_scheduled_reply(parsed_intent, result)
+      lines = [ "✅ 已幫您安排 #{result.scheduled.size}/#{parsed_intent.requested_occurrences} 次「#{parsed_intent.title}」：" ]
+      result.scheduled.each { |s| lines << "⏰ #{format_time(s.start_time)}-#{s.end_time.strftime('%H:%M')}" }
+      lines << "😥 剩下 #{result.skipped} 次在指定範圍內找不到空檔，麻煩換個時間或範圍再試一次。" if result.skipped.positive?
+
+      lines.join("\n")
     end
 
     def settings_reply(preference)

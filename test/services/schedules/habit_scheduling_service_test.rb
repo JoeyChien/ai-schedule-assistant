@@ -1,6 +1,11 @@
 require "test_helper"
 
 class Schedules::HabitSchedulingServiceTest < ActiveSupport::TestCase
+  # 固定在測試日期（2026-08-04）之前，這樣「今天不能排過去時間」的邏輯不會影響這些測試
+  # （這個 Job 實際上是每天 07:00 觸發，當天一早排，本來就不會撞到這個問題）
+  setup { travel_to(Time.zone.parse("2026-08-01T09:00:00+08:00")) }
+  teardown { travel_back }
+
   test "schedules every pending habit into the free slots, in order" do
     calendar = FakeGoogleCalendarService.new
     service = Schedules::HabitSchedulingService.new(calendar: calendar)

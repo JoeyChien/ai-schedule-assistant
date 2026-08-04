@@ -104,4 +104,30 @@ class ParsedIntentTest < ActiveSupport::TestCase
     assert_equal "21:00", intent.window_end
     assert_equal [ { "start" => "12:30", "end" => "13:30" } ], intent.excluded_ranges
   end
+
+  test "from_hash builds a FIND_FREE_TIME intent with occurrences/range_start/range_end" do
+    intent = ParsedIntent.from_hash(
+      "action" => "FIND_FREE_TIME",
+      "title" => "閱讀",
+      "occurrences" => 2,
+      "duration_minutes" => 60,
+      "range_start" => "2026-08-04",
+      "range_end" => "2026-08-09",
+      "preferred_period" => "evening"
+    )
+
+    assert intent.find_free_time?
+    assert_equal 2, intent.requested_occurrences
+    assert_equal 60.minutes, intent.requested_duration
+    assert_equal Date.new(2026, 8, 4)..Date.new(2026, 8, 9), intent.schedule_range
+  end
+
+  test "requested_occurrences defaults to 1 and schedule_range defaults to today only, when missing" do
+    travel_to Time.zone.parse("2026-08-04T12:00:00+08:00") do
+      intent = ParsedIntent.new(action: "FIND_FREE_TIME", title: "閱讀")
+
+      assert_equal 1, intent.requested_occurrences
+      assert_equal Date.current..Date.current, intent.schedule_range
+    end
+  end
 end

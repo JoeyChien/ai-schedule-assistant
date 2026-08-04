@@ -1,6 +1,10 @@
 require "test_helper"
 
 class Schedules::CreationServiceTest < ActiveSupport::TestCase
+  # 固定在測試日期（2026-08-04）之前，這樣「今天不能排過去時間」的邏輯不會影響這些測試
+  setup { travel_to(Time.zone.parse("2026-08-01T09:00:00+08:00")) }
+  teardown { travel_back }
+
   test "create persists a Schedule with the google_event_id returned by the calendar" do
     calendar = FakeGoogleCalendarService.new
     service = Schedules::CreationService.new(calendar: calendar)
@@ -92,5 +96,29 @@ class Schedules::CreationServiceTest < ActiveSupport::TestCase
     error = assert_raises(Schedules::CreationService::NoFreeSlotError) { service.create(intent) }
 
     assert_includes error.message, "冥想"
+  end
+
+  test "auto-schedule never picks a time already in the past today" do
+    travel_to(Time.zone.parse("2026-08-04T22:00:00+08:00")) do
+      calendar = FakeGoogleCalendarService.new
+      service = Schedules::CreationService.new(calendar: calendar)
+      intent = ParsedIntent.new(action: "CREATE", title: "閱讀", time_specified: false, duration_minutes: 30, date: "2026-08-04")
+
+      error = assert_raises(Schedules::CreationService::NoFreeSlotError) { service.create(intent) }
+
+      assert_includes error.message, "閱讀"
+    end
+  end
+
+  test "auto-schedule for today starts from now + 1 hour when there's still room" do
+    travel_to(Time.zone.parse("2026-08-04T15:00:00+08:00")) do
+      calendar = FakeGoogleCalendarService.new
+      service = Schedules::CreationService.new(calendar: calendar)
+      intent = ParsedIntent.new(action: "CREATE", title: "閱讀", time_specified: false, duration_minutes: 30, date: "2026-08-04")
+
+      schedule = service.create(intent)
+
+      assert_equal Time.zone.parse("2026-08-04T16:00"), schedule.start_time
+    end
   end
 end

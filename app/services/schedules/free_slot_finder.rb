@@ -3,6 +3,8 @@ module Schedules
   class FreeSlotFinder
     DEFAULT_WINDOW_START = "08:00".freeze
     DEFAULT_WINDOW_END = "22:00".freeze
+    # 今天的空檔至少要在「現在」的這麼久之後才能開始，避免排到已經過去、或是根本來不及準備的時間
+    MIN_LEAD_TIME = 1.hour
 
     def initialize(calendar: GoogleCalendarService.new)
       @calendar = calendar
@@ -11,8 +13,14 @@ module Schedules
     # 回傳空檔陣列，每個元素為排他 Range（start_time...end_time）
     # excluded_ranges：額外要排除的固定時段（例如午休、晚餐），格式為 [{ "start" => "12:00", "end" => "13:00" }, ...]
     def free_slots(date:, window_start: DEFAULT_WINDOW_START, window_end: DEFAULT_WINDOW_END, excluded_ranges: [])
+      return [] if date < Date.current
+
       window_open = time_on(date, window_start)
       window_close = time_on(date, window_end)
+      window_open = [ window_open, Time.zone.now + MIN_LEAD_TIME ].max if date == Date.current
+
+      return [] if window_open >= window_close
+
       window = window_open...window_close
 
       busy_from_calendar = @calendar.find_free_busy(window_open, window_close)
