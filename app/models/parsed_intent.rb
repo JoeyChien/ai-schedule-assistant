@@ -1,7 +1,7 @@
 class ParsedIntent
   include ActiveModel::Model
 
-  ACTIONS = %w[CREATE UPDATE DELETE FIND_FREE_TIME].freeze
+  ACTIONS = %w[CREATE UPDATE DELETE QUERY FIND_FREE_TIME].freeze
 
   attr_accessor :action,
                 :title,
@@ -38,8 +38,20 @@ class ParsedIntent
     action == "DELETE"
   end
 
+  def query?
+    action == "QUERY"
+  end
+
   def find_free_time?
     action == "FIND_FREE_TIME"
+  end
+
+  # QUERY 的查詢區間；Gemini 沒給時間時預設查今天
+  def query_range
+    range_start = (start_time || Time.zone.now).beginning_of_day
+    range_end = (end_time || start_time || Time.zone.now).end_of_day
+
+    range_start..range_end
   end
 
   def to_schedule_attributes

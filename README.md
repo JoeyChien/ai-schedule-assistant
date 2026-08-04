@@ -27,6 +27,8 @@ bin/rails credentials:edit
 # line:
 #   channel_secret: <LINE Channel Secret>
 #   channel_access_token: <LINE Channel Access Token>
+#   user_id: <先存空字串即可，是「每日固定行程通知」「每日摘要推播」(FR-006 / FR-007) 主動推播的對象，
+#             等下面第 4 步跟 LINE Bot 對話過一次、從 server log 拿到 user_id 後再回來補上>
 # google:
 #   client_id: <config/google/credentials.json 裡的 client_id>
 #   client_secret: <config/google/credentials.json 裡的 client_secret>
@@ -56,7 +58,7 @@ bin/dev
 ### 1. 跑自動化測試（不需要任何金鑰）
 
 ```bash
-bin/rails test          # 12 個 model/service 測試，涵蓋建立/修改/刪除/找不到行程/AI 解析失敗/Google API 錯誤
+bin/rails test          # model/service/job 測試，涵蓋建立/修改/刪除/查詢/每日排程/每日摘要/找不到行程/AI 解析失敗/Google API 錯誤
 bin/rubocop              # 風格檢查
 bin/brakeman --no-pager  # 資安掃描
 bin/rails zeitwerk:check # 確認所有 class/module 都能正確 autoload
@@ -97,6 +99,19 @@ curl -X POST http://localhost:3000/api/v1/schedules/parse \
    - 「明天下午五點健身」→ 建立行程
    - 「今天健身改七點」→ 修改行程（需先有「今天」的同名行程）
    - 「取消今天健身」→ 刪除行程
+   - 「今天有什麼安排？」→ 查詢行程（FR-004），會列出當天（或指定日期）的所有行程
+4. 第一次跟機器人說話後，server log 會印出 `[LineBotController] message from user_id=Uxxxx...`，把這個值存進 `credentials.line.user_id`，才能收到下面第 5 點的主動推播
+
+### 5. 測試每日固定行程 / 每日摘要（FR-005 / FR-006 / FR-007）
+
+這兩個功能設計上是每天由排程自動觸發（`config/recurring.yml`，正式環境用 Solid Queue 於 07:00 / 23:00 執行），本機開發環境預設不會啟動 Solid Queue supervisor，所以要測試的話用 console 手動觸發即可：
+
+```bash
+bin/rails runner 'DailyHabitSchedulingJob.perform_now'  # FR-005/006：找空檔排入「閱讀／散步／英文／冥想」
+bin/rails runner 'DailySummaryJob.perform_now'          # FR-007：整理今天完成/未完成事項 + 明日建議
+```
+
+需要 Google Calendar 憑證（找空檔、建立事件）與 `credentials.line.user_id`（推播用）都設定好才會真的建立行程、送出 LINE 訊息；若 Gemini 呼叫失敗，`DailySummaryJob` 會自動退回純文字版本的摘要，不會整個推播失敗。
 
 ## 常用維運指令
 
@@ -113,6 +128,6 @@ RAILS_ENV=test bin/rails db:migrate  # 測試資料庫也要套用
 - [x] FR-001 建立行程（LINE + REST API）
 - [x] FR-002 修改行程
 - [x] FR-003 刪除行程
-- [ ] FR-004 查詢行程
-- [ ] FR-005 / FR-006 每日固定行程自動排空檔
-- [ ] FR-007 每日摘要推播
+- [x] FR-004 查詢行程（LINE，`/api/v1/schedules/parse` 目前只走建立流程，未接 QUERY）
+- [x] FR-005 / FR-006 每日固定行程自動排空檔（`DailyHabitSchedulingJob`，每天 07:00）
+- [x] FR-007 每日摘要推播（`DailySummaryJob`，每天 23:00）

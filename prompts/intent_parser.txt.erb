@@ -8,10 +8,13 @@
 1. 僅以標準 JSON 格式輸出，不要加任何 Markdown 標記（例如不要加 ```json）。
 2. JSON 格式需包含以下欄位：
 {
-  "action": "CREATE" (新增) 或 "UPDATE" (修改) 或 "DELETE" (刪除) 或 "FIND_FREE_TIME" (找空檔),
-  "title": "行程名稱/主題",
+  "action": "CREATE" (新增) 或 "UPDATE" (修改) 或 "DELETE" (刪除) 或 "QUERY" (查詢) 或 "FIND_FREE_TIME" (找空檔),
+  "title": "行程名稱/主題（QUERY 若沒有指定主題則填空字串）",
   "start_time": "YYYY-MM-DDTHH:mm:ss+08:00",
   "end_time": "YYYY-MM-DDTHH:mm:ss+08:00 (若未指定，預設為開始時間 +1 小時)",
   "location": "地點（若無則填空字串）"
 }
-  
+3. 當 action 為 "QUERY" 時：
+   - start_time 請填「查詢區間的起點」，例如使用者問「今天」就填今天 00:00:00，問「這週」就填本週一 00:00:00。
+   - end_time 請填「查詢區間的終點」，例如問「今天」就填今天 23:59:59，問「這週」就填本週日 23:59:59。
+   - 若使用者沒有指定日期（例如直接問「有什麼安排？」），預設查詢今天。

@@ -38,6 +38,35 @@ class Schedules::CommandServiceTest < ActiveSupport::TestCase
     assert_nil result.schedule
   end
 
+  test "QUERY lists schedules in range and does not touch Google Calendar" do
+    Schedule.create!(title: "健身", start_time: Time.zone.parse("2026-08-04T17:00:00+08:00"), end_time: Time.zone.parse("2026-08-04T18:00:00+08:00"))
+    intent = ParsedIntent.new(
+      action: "QUERY",
+      start_time: Time.zone.parse("2026-08-04T00:00:00+08:00"),
+      end_time: Time.zone.parse("2026-08-04T23:59:59+08:00")
+    )
+    calendar = FakeGoogleCalendarService.new
+
+    result = build_service(intent: intent, calendar: calendar).call("今天有什麼安排？")
+
+    assert_includes result.reply_text, "健身"
+    assert_includes result.reply_text, "17:00"
+    assert_nil result.schedule
+    assert_empty calendar.calls
+  end
+
+  test "QUERY with nothing scheduled replies that the range is free" do
+    intent = ParsedIntent.new(
+      action: "QUERY",
+      start_time: Time.zone.parse("2026-08-04T00:00:00+08:00"),
+      end_time: Time.zone.parse("2026-08-04T23:59:59+08:00")
+    )
+
+    result = build_service(intent: intent).call("今天有什麼安排？")
+
+    assert_includes result.reply_text, "沒有安排"
+  end
+
   test "unrecognized action replies with an unsupported message" do
     intent = ParsedIntent.new(action: "FIND_FREE_TIME", title: nil)
 

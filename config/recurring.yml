@@ -13,3 +13,11 @@ production:
   clear_solid_queue_finished_jobs:
     command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
     schedule: every hour at minute 12
+  # FR-005 / FR-006：每天早上讀取當天行程，把空檔排入固定習慣（閱讀／散步／英文／冥想）
+  schedule_daily_habits:
+    class: DailyHabitSchedulingJob
+    schedule: at 7am every day
+  # FR-007：每天晚上整理完成／未完成事項與明日建議，推播到 LINE
+  send_daily_summary:
+    class: DailySummaryJob
+    schedule: at 11pm every day

@@ -279,6 +279,12 @@ Google Calendar 新增：
 
 LINE 回覆
 
+### 實作備註
+
+- 查詢的資料來源是本地資料庫（`Schedule` table），不是即時打 Google Calendar API。因為目前所有由本系統建立的行程，本來就會同時寫入 Google Calendar 與本地 DB（兩邊互為鏡像），查本地 DB 更快、也不受 Google API 額度限制。
+- Gemini 解析出 `action: "QUERY"` 時，會一併給出查詢區間的 `start_time` / `end_time`（例如「今天」→ 當天 00:00–23:59；「這週」→ 週一–週日），交給 `Schedules::QueryService` 查詢並依開始時間排序整理成訊息。
+- 目前只有 LINE 對話（`Schedules::CommandService`）支援 QUERY；REST API 的 `POST /api/v1/schedules/parse` 目前仍固定只走建立流程（`Schedules::CreationService`），尚未串接完整的意圖分派。
+
 ---
 
 ## FR-005 AI 安排固定習慣
@@ -293,6 +299,11 @@ AI：
 - 查詢 Calendar
 - 找空檔
 - 建立三筆 Event
+
+### 實作備註（v1.0 範圍調整）
+
+- v1.0 只實作了 FR-006「每天自動排固定習慣」，這種**使用者在對話中臨時要求**排程（例如「幫我安排本週三次重訓」）尚未實作，`Schedules::CommandService` 收到這類意圖時仍會回覆「這個功能還在開發中」。
+- `ParsedIntent::ACTIONS` 已經預留 `FIND_FREE_TIME`，之後要做這個功能時可以直接沿用。
 
 ---
 
@@ -310,6 +321,15 @@ AI：
     - 英文
     - 冥想
 
+### 實作備註
+
+- 由 `DailyHabitSchedulingJob` 執行，核心邏輯在 `Schedules::HabitSchedulingService`：
+  1. `Schedules::FreeSlotFinder` 呼叫 `GoogleCalendarService#find_free_busy` 取得當天 08:00–22:00 的忙碌時段，算出空檔。
+  2. 依序把「閱讀 30 分 / 散步 30 分 / 英文 30 分 / 冥想 15 分」塞進空檔（今天已經有同名行程就跳過；空檔不夠長也會跳過）。
+  3. 成功建立的行程會同時寫入 Google Calendar 與本地 DB（`source: "habit_auto"`），並透過 LINE Push Message 通知結果（含跳過的項目與原因）。
+- 固定習慣清單目前是程式常數 `Schedules::HabitSchedulingService::DAILY_HABITS`（寫死在程式碼），還沒有做十一、資料模型章節的 `Habit` 資料表 —— 那屬於 Roadmap v1.5「Habit Management」的範圍。
+- 排程時間對照 `config/recurring.yml` 的 `schedule_daily_habits`（正式環境 07:00，時區依 `config.time_zone`／`Asia/Taipei`）。
+
 ---
 
 ## FR-007 每日摘要
@@ -323,6 +343,22 @@ AI 整理：
 - 明日建議
 
 LINE 推播。
+
+### 實作備註
+
+- 由 `DailySummaryJob` 執行，核心邏輯在 `Schedules::DailySummaryService`。
+- 目前資料模型沒有「完成狀態」欄位，因此用 `end_time <= 現在時間` 當作「已完成」的判斷依據，其餘視為「尚未完成」。
+- 摘要文字交給 Gemini（AI-004）依 `prompts/daily_summary.txt.erb` 產生；若 Gemini 呼叫失敗或回傳空白，會自動退回程式產生的純文字版本，確保每天的推播不會因為 AI 服務問題而整個失敗。
+- 明日建議目前用「固定習慣清單裡，今天還沒排過的第一項」帶出（例如今天沒做「英文」，就建議明天安排英文）。
+- 排程時間對照 `config/recurring.yml` 的 `send_daily_summary`（正式環境 23:00）。
+
+---
+
+## FR-006 / FR-007 共通：LINE 主動推播
+
+- 這兩個排程都是系統主動發訊息（不是回覆使用者訊息），走的是 LINE Messaging API 的 **Push Message**，跟 FR-001~004 用的 Reply Message（需要 `reply_token`，且有時效限制）不同，實作在 `Line::WebhookService#push_text`。
+- 推播對象是 `Rails.application.credentials.dig(:line, :user_id)`，需要先跟機器人互動過一次、從 server log 取得 `user_id` 後手動設定（見 README「首次設定」第 4 步）。
+- 正式環境靠 `config/recurring.yml` + Solid Queue 觸發（`SOLID_QUEUE_IN_PUMA`，見 `config/deploy.yml`）；本機開發環境預設不會自動排程，需要用 `bin/rails runner` 手動觸發測試（見 README「測試每日固定行程 / 每日摘要」）。
 
 ---
 
@@ -408,6 +444,8 @@ Deadline
 # 十一、資料模型
 
 ## Habit
+
+> v1.0 尚未建立這張表，FR-006 的固定習慣清單目前是寫死在 `Schedules::HabitSchedulingService::DAILY_HABITS`。這張表屬於 Roadmap v1.5「Habit Management」的範圍。
 
 | Field | Type |
 | --- | --- |

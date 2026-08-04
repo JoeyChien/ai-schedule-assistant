@@ -8,12 +8,14 @@ module Schedules
       parser: ParserService.new,
       creation_service: CreationService.new,
       update_service: UpdateService.new,
-      deletion_service: DeletionService.new
+      deletion_service: DeletionService.new,
+      query_service: QueryService.new
     )
       @parser = parser
       @creation_service = creation_service
       @update_service = update_service
       @deletion_service = deletion_service
+      @query_service = query_service
     end
 
     def call(message)
@@ -29,6 +31,9 @@ module Schedules
       when "DELETE"
         schedule = @deletion_service.delete(parsed_intent)
         Result.new(reply_text: deleted_reply(schedule), schedule: schedule)
+      when "QUERY"
+        schedules = @query_service.call(parsed_intent)
+        Result.new(reply_text: query_reply(schedules), schedule: nil)
       else
         Result.new(reply_text: unsupported_reply, schedule: nil)
       end
@@ -57,6 +62,13 @@ module Schedules
 
     def deleted_reply(schedule)
       "🗑️ 已取消行程：#{schedule.title}"
+    end
+
+    def query_reply(schedules)
+      return "這個時段目前沒有安排的行程 📭" if schedules.empty?
+
+      lines = schedules.map { |s| "⏰ #{format_time(s.start_time)} 📌 #{s.title}" }
+      "📅 目前的安排：\n#{lines.join("\n")}"
     end
 
     def unsupported_reply

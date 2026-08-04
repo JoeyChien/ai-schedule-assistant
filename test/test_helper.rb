@@ -16,11 +16,15 @@ end
 
 # 測試替身：代替 GoogleCalendarService，避免測試打到真正的 Google API
 class FakeGoogleCalendarService
+  FakeBusyPeriod = Struct.new(:start, :end)
+
   attr_reader :calls
+  attr_writer :busy_periods
 
   def initialize
     @calls = []
     @sequence = 0
+    @busy_periods = []
   end
 
   def create_event(**attrs)
@@ -37,5 +41,10 @@ class FakeGoogleCalendarService
   def delete_event(event_id)
     @calls << [ :delete_event, event_id ]
     true
+  end
+
+  def find_free_busy(start_time, end_time)
+    @calls << [ :find_free_busy, start_time, end_time ]
+    @busy_periods
   end
 end

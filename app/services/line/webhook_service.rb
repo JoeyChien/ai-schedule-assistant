@@ -23,6 +23,16 @@ module Line
       )
     end
 
+    # 主動推播（每日固定行程通知、每日摘要），不受 reply_token 有效期限制
+    def push_text(user_id, text)
+      @client.push_message(
+        push_message_request: Bot::V2::MessagingApi::PushMessageRequest.new(
+          to: user_id,
+          messages: [ Bot::V2::MessagingApi::TextMessage.new(text: text) ]
+        )
+      )
+    end
+
     private
 
     def credential(key)
