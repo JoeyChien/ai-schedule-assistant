@@ -405,6 +405,7 @@ DEPENDENCIES
   brakeman
   bundler-audit
   debug
+  dotenv
   faraday
   google-apis-calendar_v3 (~> 0.50)
   googleauth

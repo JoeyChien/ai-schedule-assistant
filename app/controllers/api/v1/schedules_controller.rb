@@ -44,6 +44,12 @@ module Api
         )
 
         render json: schedule, status: :created
+      rescue Ai::GeminiService::RequestError => e
+        render json: { error: e.message }, status: :bad_gateway
+      rescue Ai::ResponseParser::ParseError => e
+        render json: { error: e.message }, status: :unprocessable_entity
+      rescue GoogleCalendarService::Error => e
+        render json: { error: e.message }, status: :bad_gateway
       end
 
       private

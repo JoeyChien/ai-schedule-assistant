@@ -72,10 +72,14 @@ class GoogleCalendarService
 
   def authorize
     Google::Auth::UserRefreshCredentials.new(
-      client_id: ENV["GOOGLE_CLIENT_ID"],
-      client_secret: ENV["GOOGLE_CLIENT_SECRET"],
-      refresh_token: ENV["GOOGLE_REFRESH_TOKEN"],
+      client_id: credential(:client_id),
+      client_secret: credential(:client_secret),
+      refresh_token: credential(:refresh_token),
       scope: [ Google::Apis::CalendarV3::AUTH_CALENDAR ]
     )
+  end
+
+  def credential(key)
+    Rails.application.credentials.dig(:google, key)
   end
 end

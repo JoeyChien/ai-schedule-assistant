@@ -3,9 +3,9 @@ module Line
     InvalidSignatureError = Bot::V2::WebhookParser::InvalidSignatureError
 
     def initialize
-      @parser = Bot::V2::WebhookParser.new(channel_secret: ENV.fetch("LINE_CHANNEL_SECRET"))
+      @parser = Bot::V2::WebhookParser.new(channel_secret: credential(:channel_secret))
       @client = Bot::V2::MessagingApi::ApiClient.new(
-        channel_access_token: ENV.fetch("LINE_CHANNEL_ACCESS_TOKEN")
+        channel_access_token: credential(:channel_access_token)
       )
     end
 
@@ -21,6 +21,12 @@ module Line
           messages: [ Bot::V2::MessagingApi::TextMessage.new(text: text) ]
         )
       )
+    end
+
+    private
+
+    def credential(key)
+      Rails.application.credentials.dig(:line, key)
     end
   end
 end

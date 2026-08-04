@@ -12,7 +12,11 @@ module Ai
         "text"
       )
 
-      raise ParseError, "Gemini 回傳內容為空" if text.blank?
+      if text.blank?
+        block_reason = response.dig("promptFeedback", "blockReason")
+        raise ParseError, "Gemini 回傳內容為空（blockReason: #{block_reason}）" if block_reason
+        raise ParseError, "Gemini 回傳內容為空：#{response.inspect}"
+      end
 
       cleaned_text = remove_markdown(text)
 

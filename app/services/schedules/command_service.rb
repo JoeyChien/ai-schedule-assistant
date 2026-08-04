@@ -32,11 +32,16 @@ module Schedules
       else
         Result.new(reply_text: unsupported_reply, schedule: nil)
       end
-    rescue Ai::ResponseParser::ParseError
+    rescue Ai::ResponseParser::ParseError => e
+      Rails.logger.error("[Schedules::CommandService] #{e.message}")
       Result.new(reply_text: parse_error_reply, schedule: nil)
+    rescue Ai::GeminiService::RequestError => e
+      Rails.logger.error("[Schedules::CommandService] #{e.message}")
+      Result.new(reply_text: ai_unavailable_reply, schedule: nil)
     rescue Finder::NotFound => e
       Result.new(reply_text: e.message, schedule: nil)
-    rescue GoogleCalendarService::Error
+    rescue GoogleCalendarService::Error => e
+      Rails.logger.error("[Schedules::CommandService] #{e.message}")
       Result.new(reply_text: calendar_error_reply, schedule: nil)
     end
 
@@ -64,6 +69,10 @@ module Schedules
 
     def calendar_error_reply
       "抱歉，Google 日曆暫時發生問題，請稍後再試一次。"
+    end
+
+    def ai_unavailable_reply
+      "抱歉，AI 服務暫時無法使用，請稍後再試一次。"
     end
 
     def format_time(time)

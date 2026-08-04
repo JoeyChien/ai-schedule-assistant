@@ -35,6 +35,11 @@ gem "image_processing", "~> 1.2"
 # Use Rack CORS for handling Cross-Origin Resource Sharing (CORS), making cross-origin Ajax possible
 # gem "rack-cors"
 
+gem "faraday" # 呼叫 Gemini REST API 用
+gem "google-apis-calendar_v3", "~> 0.50" # Google Calendar 官方 Gem
+gem "googleauth" # Google OAuth 認證用
+gem "line-bot-api"
+
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
@@ -48,8 +53,6 @@ group :development, :test do
   # Omakase Ruby styling [https://github.com/rails/rubocop-rails-omakase/]
   gem "rubocop-rails-omakase", require: false
 
-  gem "faraday" # 呼叫 Gemini REST API 用
-  gem "google-apis-calendar_v3", "~> 0.50" # Google Calendar 官方 Gem
-  gem "googleauth" # Google OAuth 認證用
-  gem "line-bot-api"
+  # 從 .env 讀取環境變數（LINE / Google 相關金鑰）
+  gem "dotenv"
 end

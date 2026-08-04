@@ -54,6 +54,15 @@ class Schedules::CommandServiceTest < ActiveSupport::TestCase
     assert_equal "我無法判斷你的時間。\n例如可以輸入：\n明天下午三點開會", result.reply_text
   end
 
+  test "a Gemini API error (e.g. quota exceeded) replies with an AI-unavailable message" do
+    service = Schedules::CommandService.new(parser: RaisingParser.new(Ai::GeminiService::RequestError.new("HTTP 429: quota exceeded")))
+
+    result = service.call("明天下午五點健身")
+
+    assert_includes result.reply_text, "AI 服務暫時無法使用"
+    assert_nil result.schedule
+  end
+
   test "a Google Calendar error replies with a friendly retry message" do
     intent = ParsedIntent.new(action: "CREATE", title: "健身", start_time: Time.zone.now)
     failing_calendar = Object.new

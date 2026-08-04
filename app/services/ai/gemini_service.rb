@@ -1,5 +1,7 @@
 module Ai
   class GeminiService
+    class RequestError < StandardError; end
+
     def initialize
       @api_key = Rails.application.credentials.dig(
         :gemini,
@@ -24,7 +26,14 @@ module Ai
         }.to_json
       end
 
-      JSON.parse(response.body)
+      body = JSON.parse(response.body)
+
+      unless response.success?
+        message = body.dig("error", "message") || response.body
+        raise RequestError, "Gemini API 回傳錯誤（HTTP #{response.status}）：#{message}"
+      end
+
+      body
     end
 
     def inspect
@@ -34,7 +43,7 @@ module Ai
     private
 
     def api_url
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=#{@api_key}"
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=#{@api_key}"
     end
   end
 end

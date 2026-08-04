@@ -1,29 +1,30 @@
-# 一次性工具：取得 Google Calendar API 所需的 GOOGLE_REFRESH_TOKEN。
+# 一次性工具：取得 Google Calendar API 所需的 refresh_token。
 #
 # 使用方式：
 #   bin/rails google:authorize
 #
 # 前置作業：
-#   1. 在 Google Cloud Console 的 OAuth 用戶端（config/google/credentials.json 對應的用戶端）
-#      的「已授權的重新導向 URI」中新增：http://localhost:8123/oauth2callback
-#      （若要換 port，設定 GOOGLE_OAUTH_PORT 環境變數並同步更新 Console 設定）
-#   2. 確保有設定 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET（.env 或環境變數），
-#      沒設定的話會退回讀取 config/google/credentials.json。
+#   在 Google Cloud Console 的 OAuth 用戶端（config/google/credentials.json 對應的用戶端）
+#   的「已授權的重新導向 URI」中新增：http://localhost:8123/oauth2callback
+#   （若要換 port，設定 GOOGLE_OAUTH_PORT 環境變數並同步更新 Console 設定）
+#
+# client_id / client_secret 優先讀取 Rails encrypted credentials 的 google: 區塊，
+# 沒設定的話會退回讀取 config/google/credentials.json。
 #
 # 執行後會開啟瀏覽器要求登入 Google 帳號並同意存取 Calendar 權限，
-# 完成後終端機會印出 GOOGLE_REFRESH_TOKEN，請手動貼到 .env。
+# 完成後終端機會印出可以直接貼進 `bin/rails credentials:edit` 的 YAML 片段。
 
 module GoogleOauthSetup
   CREDENTIALS_FILE = Rails.root.join("config", "google", "credentials.json")
 
   def self.client_id_and_secret
-    client_id = ENV["GOOGLE_CLIENT_ID"]
-    client_secret = ENV["GOOGLE_CLIENT_SECRET"]
+    client_id = Rails.application.credentials.dig(:google, :client_id)
+    client_secret = Rails.application.credentials.dig(:google, :client_secret)
 
     return [ client_id, client_secret ] if client_id.present? && client_secret.present?
 
     unless File.exist?(CREDENTIALS_FILE)
-      abort "找不到 GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET，也沒有 #{CREDENTIALS_FILE} 可以讀取"
+      abort "找不到 Rails credentials 裡的 google.client_id/client_secret，也沒有 #{CREDENTIALS_FILE} 可以讀取"
     end
 
     web = JSON.parse(File.read(CREDENTIALS_FILE))["web"]
@@ -51,7 +52,7 @@ module GoogleOauthSetup
 end
 
 namespace :google do
-  desc "取得 Google Calendar API 的 GOOGLE_REFRESH_TOKEN（一次性 OAuth 授權流程）"
+  desc "取得 Google Calendar API 的 refresh_token（一次性 OAuth 授權流程）"
   task authorize: :environment do
     require "socket"
     require "faraday"
@@ -102,7 +103,10 @@ namespace :google do
     end
 
     puts
-    puts "取得成功！請將以下這行加入 .env："
-    puts "GOOGLE_REFRESH_TOKEN=#{tokens['refresh_token']}"
+    puts "取得成功！請執行 `bin/rails credentials:edit`，把以下內容加入（或更新）："
+    puts "google:"
+    puts "  client_id: #{client_id}"
+    puts "  client_secret: #{client_secret}"
+    puts "  refresh_token: #{tokens['refresh_token']}"
   end
 end
