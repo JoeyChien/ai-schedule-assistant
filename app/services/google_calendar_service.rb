@@ -35,8 +35,8 @@ class GoogleCalendarService
   # 查詢空檔 (User Story 2 & 3 必備)
   def find_free_busy(start_time, end_time)
     request = Google::Apis::CalendarV3::FreeBusyRequest.new(
-      time_min: start_time,
-      time_max: end_time,
+      time_min: start_time.to_datetime,
+      time_max: end_time.to_datetime,
       items: [ { id: CALENDAR_ID } ]
     )
 
@@ -50,8 +50,8 @@ class GoogleCalendarService
     Google::Apis::CalendarV3::Event.new(
       summary: summary,
       location: location,
-      start: Google::Apis::CalendarV3::EventDateTime.new(date_time: start_time),
-      end: Google::Apis::CalendarV3::EventDateTime.new(date_time: end_time)
+      start: Google::Apis::CalendarV3::EventDateTime.new(date_time: start_time.to_datetime),
+      end: Google::Apis::CalendarV3::EventDateTime.new(date_time: end_time.to_datetime)
     )
   end
 
