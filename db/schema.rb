@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_31_084351) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_04_040215) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -18,10 +18,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_31_084351) do
     t.datetime "created_at", null: false
     t.text "description"
     t.datetime "end_time"
+    t.string "google_event_id"
     t.string "source"
     t.datetime "start_time"
     t.string "status"
     t.string "title"
     t.datetime "updated_at", null: false
+    t.index ["google_event_id"], name: "index_schedules_on_google_event_id"
   end
 end

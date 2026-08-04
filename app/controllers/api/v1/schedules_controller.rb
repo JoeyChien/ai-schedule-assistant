@@ -1,7 +1,6 @@
 module Api
   module V1
     class SchedulesController < ApplicationController
-
       def index
         schedules = Schedule.order(start_time: :asc)
 
@@ -39,6 +38,13 @@ module Api
         head :no_content
       end
 
+      def parse
+        schedule = Schedules::CreationService.new.create_from_message(
+          params[:message]
+        )
+
+        render json: schedule, status: :created
+      end
 
       private
 
@@ -54,7 +60,6 @@ module Api
                 :status
               )
       end
-
     end
   end
 end

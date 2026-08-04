@@ -48,5 +48,8 @@ group :development, :test do
   # Omakase Ruby styling [https://github.com/rails/rubocop-rails-omakase/]
   gem "rubocop-rails-omakase", require: false
 
-  gem "faraday"
+  gem "faraday" # 呼叫 Gemini REST API 用
+  gem "google-apis-calendar_v3", "~> 0.50" # Google Calendar 官方 Gem
+  gem "googleauth" # Google OAuth 認證用
+  gem "line-bot-api"
 end
