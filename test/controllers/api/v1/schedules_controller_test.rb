@@ -31,4 +31,30 @@ class Api::V1::SchedulesControllerTest < ActionDispatch::IntegrationTest
     assert_response :bad_request
     assert_includes JSON.parse(response.body)["error"], "date"
   end
+
+  test "index with start_date/end_date only returns schedules in that range (used by n8n's weekly summary workflow)" do
+    in_range = Schedule.create!(title: "健身", start_time: Time.zone.parse("2026-08-04T17:00:00+08:00"), end_time: Time.zone.parse("2026-08-04T18:00:00+08:00"))
+    Schedule.create!(title: "範圍外的行程", start_time: Time.zone.parse("2026-08-10T09:00:00+08:00"), end_time: Time.zone.parse("2026-08-10T10:00:00+08:00"))
+
+    get api_v1_schedules_path, params: { start_date: "2026-08-03", end_date: "2026-08-05" }
+
+    assert_response :success
+    body = JSON.parse(response.body)
+    assert_equal 1, body.size
+    assert_equal in_range.id, body.first["id"]
+  end
+
+  test "index with only start_date (missing end_date) replies 400" do
+    get api_v1_schedules_path, params: { start_date: "2026-08-03" }
+
+    assert_response :bad_request
+    assert_includes JSON.parse(response.body)["error"], "start_date"
+  end
+
+  test "index with an invalid start_date/end_date replies 400 instead of raising" do
+    get api_v1_schedules_path, params: { start_date: "not-a-date", end_date: "2026-08-05" }
+
+    assert_response :bad_request
+    assert_includes JSON.parse(response.body)["error"], "date"
+  end
 end

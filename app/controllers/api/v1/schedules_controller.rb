@@ -2,10 +2,20 @@ module Api
   module V1
     class SchedulesController < ApplicationController
       # date 是給 n8n 這類外部排程呼叫用的，例如 ?date=2026-08-05 只回傳當天的行程；
-      # 沒帶 date 就維持原本「回傳全部」的行為
+      # start_date/end_date 是給 n8n 每週統計工作流程用的區間查詢，例如 ?start_date=2026-07-27&end_date=2026-08-02；
+      # 都沒帶就維持原本「回傳全部」的行為
       def index
         schedules = Schedule.order(start_time: :asc)
-        schedules = schedules.on_date(Date.parse(params[:date])) if params[:date].present?
+
+        if params[:date].present?
+          schedules = schedules.on_date(Date.parse(params[:date]))
+        elsif params[:start_date].present? && params[:end_date].present?
+          start_date = Date.parse(params[:start_date])
+          end_date = Date.parse(params[:end_date])
+          schedules = schedules.in_range(start_date.beginning_of_day..end_date.end_of_day)
+        elsif params[:start_date].present? || params[:end_date].present?
+          return render json: { error: "start_date 和 end_date 要一起帶" }, status: :bad_request
+        end
 
         render json: schedules
       rescue ArgumentError

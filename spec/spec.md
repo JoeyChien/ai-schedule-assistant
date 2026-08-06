@@ -62,6 +62,7 @@
 - LINE Bot
 - Prompt Engineering
 - n8n Workflow
+- Google Sheets API
 - Business Process Automation
 - Workflow Design
 - API Integration
@@ -145,12 +146,13 @@ LINE Reply
 
 上面這張圖是原始規劃，實際 v1.0 的 LINE 建立/修改/刪除/查詢行程（FR-001~004）**沒有經過 n8n**，是 LINE Webhook 直接打 Rails（`LineBotController` → `Schedules::CommandService`），Gemini/Google Calendar 都是 Rails 直接呼叫，理由是這條路徑有撞期檢查、自動排空檔這類需要「讀狀態、寫兩個系統（DB + Google Calendar）」的業務邏輯，用程式碼實作比較可靠，也比較好寫測試。
 
-n8n 實際承擔的是兩個**唯讀、排程觸發**的通知工作流程（不寫入任何資料，只讀 Rails 提供的 API 再推播 LINE），細節見 [docs/n8n_workflows.md](../docs/n8n_workflows.md)：
+n8n 實際承擔的是三個**對 Rails 唯讀、排程觸發**的工作流程（都不會寫入 Rails 的資料，只讀 Rails 提供的 API，再推播 LINE／寫進 Google Sheet），細節見 [docs/n8n_workflows.md](../docs/n8n_workflows.md)：
 
 - 每日行程提醒（FR-009，09:00）
 - 每日摘要（FR-007，23:00，取代原本 Rails 自己排程觸發的方式）
+- 每週項目時間統計（FR-010，週一 08:00，寫入 Google Sheet）
 
-這樣分工同時展示了「核心業務邏輯用程式碼實作＋測試」跟「排程通知類工作流程用 n8n 編排」兩種能力。
+這樣分工同時展示了「核心業務邏輯用程式碼實作＋測試」跟「排程通知/報表類工作流程用 n8n 編排」兩種能力。
 
 ---
 
@@ -162,6 +164,7 @@ n8n 實際承擔的是兩個**唯讀、排程觸發**的通知工作流程（不
 | Workflow | n8n |
 | AI | Gemini API |
 | Calendar | Google Calendar API |
+| 統計報表 | Google Sheets API |
 | Database | Supabase |
 | Backend（Optional） | Spring Boot |
 | Hosting | Railway / Render |
@@ -412,11 +415,46 @@ LINE 推播。
 
 ---
 
-## FR-007 / FR-009 共通：LINE 主動推播
+## FR-010 每週項目時間統計（v1.0 新增，原規格沒有這條，對應 Roadmap v2.0「AI 每週分析」的第一步）
 
-- 這兩個通知都是系統主動發訊息（不是回覆使用者訊息），走的是 LINE Messaging API 的 **Push Message**，跟 FR-001~004 用的 Reply Message（需要 `reply_token`，且有時效限制）不同。
+每週一 08:00
+
+系統：
+
+- 讀取上週一～上週日的所有行程
+- 依行程標題（項目）分組，加總每個項目的時數
+- 寫入 Google Sheet 累積統計
+- LINE 推播本週統計已更新、附上時數前幾名的項目
+
+### Output（Google Sheet 新增/更新的列）
+
+| 週期 | 項目 | 總時數 | 行程數 |
+| --- | --- | --- | --- |
+| 2026-07-27 ~ 2026-08-02 | 健身 | 3.5 | 3 |
+| 2026-07-27 ~ 2026-08-02 | 閱讀 | 2.0 | 4 |
+
+### Output（LINE 推播）
+
+```
+📊 上週（2026-07-27 ~ 2026-08-02）時間統計已更新到 Google Sheet
+🏆 健身：3.5 小時（3 筆）
+🏆 閱讀：2.0 小時（4 筆）
+```
+
+### 實作備註
+
+- 完全由 n8n 負責（見 [docs/n8n_workflows.md](../docs/n8n_workflows.md) 工作流程 C），Rails 沒有對應的 Job；只擴充既有的 `GET /api/v1/schedules`，新增 `start_date`/`end_date` 區間查詢參數（原本只支援單日 `date`），讓 n8n 一次拿到整週的資料，分組加總、寫 Google Sheet、組 LINE 訊息都在 n8n 節點裡完成。
+- 目前 `Schedule` 資料表沒有獨立的「項目／分類」欄位（見十一、資料模型 `Calendar Event` 的 `category`，v1.0 尚未實作），這裡直接把行程的 `title` 當作項目名稱分組；日後如果真的加上 `category` 欄位，只要改 n8n 的分組欄位即可，Rails API 不用變。
+- 寫入 Google Sheet 用「Append or Update」，以「週期＋項目」兩欄當比對鍵，同一週重跑不會產生重複列。
+- 如果上週完全沒有任何行程，n8n 那條分支不會有資料可以往下傳，不會新增空白列、也不會推播 LINE（demo 用途，刻意不特別處理這個邊界情況）。
+
+---
+
+## FR-007 / FR-009 / FR-010 共通：LINE 主動推播
+
+- 這三個通知都是系統主動發訊息（不是回覆使用者訊息），走的是 LINE Messaging API 的 **Push Message**，跟 FR-001~004 用的 Reply Message（需要 `reply_token`，且有時效限制）不同。
 - 推播對象是 LINE 的 `user_id`（跟 `credentials.line.user_id` 同一組），取得方式見 README「首次設定」第 4 步；n8n 那邊要另外把同一組 `channel_access_token` / `user_id` 設定成自己的 credential。
-- FR-005/006（每日固定行程）仍由 Rails 的 `config/recurring.yml` + Solid Queue 觸發（`SOLID_QUEUE_IN_PUMA`，見 `config/deploy.yml`），因為那條有撞期檢查、自動排空檔這類業務邏輯，適合留在程式碼裡；FR-007/FR-009 這兩個純通知則交給 n8n。
+- FR-005/006（每日固定行程）仍由 Rails 的 `config/recurring.yml` + Solid Queue 觸發（`SOLID_QUEUE_IN_PUMA`，見 `config/deploy.yml`），因為那條有撞期檢查、自動排空檔這類業務邏輯，適合留在程式碼裡；FR-007/FR-009/FR-010 這幾個通知/報表則交給 n8n。
 
 ---
 
@@ -628,6 +666,24 @@ LINE
 
 ---
 
+## Workflow D
+
+每週項目時間統計
+
+```
+Cron（每週一）
+↓
+讀取上週行程（區間查詢）
+↓
+依項目分組加總時數
+↓
+寫入 Google Sheet
+↓
+LINE 摘要
+```
+
+---
+
 # 十三、錯誤處理
 
 ## Google API Error
@@ -701,7 +757,7 @@ LINE 回覆：
 
 - Notion 同步
 - Gmail 行程解析
-- AI 每週分析
+- AI 每週分析（基礎版的每週項目時間統計已在 v1.0 提前實作，見 FR-010；這裡指的是在統計數字之上再加一層 AI 洞察/建議，例如分析時間分配是否失衡）
 - AI 每月效率分析
 - AI 學習使用者排程習慣
 - RAG Knowledge Base

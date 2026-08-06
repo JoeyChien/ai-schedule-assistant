@@ -1,6 +1,6 @@
 # AI Schedule Assistant
 
-透過 LINE 傳一句話（例如「明天下午五點健身」），由 Gemini 解析意圖後自動操作 Google Calendar 的智慧排程助理。核心 CRUD/撞期檢查/自動排空檔都是 Rails 本身處理，兩個每日通知（早上行程提醒、晚上摘要）則是用 n8n 排程串接 Rails API + Gemini + LINE，見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。完整規格見 [spec/spec.md](spec/spec.md)。
+透過 LINE 傳一句話（例如「明天下午五點健身」），由 Gemini 解析意圖後自動操作 Google Calendar 的智慧排程助理。核心 CRUD/撞期檢查/自動排空檔都是 Rails 本身處理，兩個每日通知（早上行程提醒、晚上摘要）跟一個每週項目時間統計，則是用 n8n 排程串接 Rails API + Gemini + LINE + Google Sheets，見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。完整規格見 [spec/spec.md](spec/spec.md)。
 
 ## 環境需求
 
@@ -84,6 +84,9 @@ curl -X DELETE http://localhost:3000/api/v1/schedules/:id
 
 # 只查某一天的行程（給 n8n 的每日工作流程用，見下方「n8n 工作流程」）
 curl "http://localhost:3000/api/v1/schedules?date=2026-08-05"
+
+# 查某個日期區間的行程（給 n8n 的每週統計工作流程用，見下方「n8n 工作流程」）
+curl "http://localhost:3000/api/v1/schedules?start_date=2026-07-27&end_date=2026-08-02"
 ```
 
 ### 3. 測試 AI 解析 + Google Calendar 建立行程（需要 Gemini + Google 憑證都設定好）
@@ -139,14 +142,14 @@ bin/rails runner 'DailyHabitSchedulingJob.perform_now'  # FR-006：找空檔排�
 
 Gemini 會參考目前的設定值，把你這句話要求的異動跟原本沒提到的部分合併後整個更新，不會把沒提到的部分清空。第一次使用（還沒有人設定過）會自動套用上面的預設值，不需要另外初始化。
 
-## n8n 工作流程（每日行程提醒 / 每日摘要，FR-007 / FR-009）
+## n8n 工作流程（每日行程提醒 / 每日摘要 / 每週項目時間統計，FR-007 / FR-009 / FR-010）
 
-每天 09:00 的「今日行程提醒」跟 23:00 的「每日摘要」這兩個通知，是用 n8n 排程觸發、呼叫 Rails 的 `GET /api/v1/schedules?date=...` 拿資料，摘要的部分再呼叫 Gemini，最後直接呼叫 LINE Push Message API 推播——Rails 完全不參與這兩個通知的觸發跟發送，只單純提供唯讀資料。
+每天 09:00 的「今日行程提醒」跟 23:00 的「每日摘要」這兩個通知，是用 n8n 排程觸發、呼叫 Rails 的 `GET /api/v1/schedules?date=...` 拿資料，摘要的部分再呼叫 Gemini，最後直接呼叫 LINE Push Message API 推播；每週一 08:00 的「每週項目時間統計」則是呼叫 `GET /api/v1/schedules?start_date=...&end_date=...` 拿上週的行程，依行程標題分組加總時數後寫進 Google Sheet，再推播一則摘要到 LINE——Rails 完全不參與這三個工作流程的觸發跟發送，只單純提供唯讀資料。
 
-完整的節點設定（HTTP Request / Code node 的程式碼）見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。之所以這樣分工：
+完整的節點設定（HTTP Request / Code / Google Sheets node 的程式碼）見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。之所以這樣分工：
 
 - FR-005/006（找空檔自動排行程）留在 Rails，因為需要撞期檢查、空檔演算法這類「有狀態的業務邏輯」，比較適合寫程式碼、也比較好寫測試。
-- FR-007/FR-009 這兩個單純「排程 → 讀資料 → （呼叫 AI）→ 推播」的通知，交給 n8n 編排，展示用 workflow 工具串接既有 API + LLM + 通訊軟體的能力。
+- FR-007/FR-009/FR-010 這幾個「排程 → 讀資料 → （呼叫 AI）→ （寫 Google Sheets）→ 推播」的通知/報表，交給 n8n 編排，展示用 workflow 工具串接既有 API + LLM + 通訊軟體 + Google Sheets 的能力。
 
 ## 常用維運指令
 
@@ -169,3 +172,4 @@ RAILS_ENV=test bin/rails db:migrate  # 測試資料庫也要套用
 - [x] FR-007 每日摘要推播（每天 23:00，v1.0 改由 n8n 觸發，見 [docs/n8n_workflows.md](docs/n8n_workflows.md)；Rails 版 `DailySummaryJob` 仍保留供手動測試）
 - [x] FR-008 自動排程設定（v1.0 追加）：沒給明確時間的行程自動找空檔排入，空檔範圍（可排程時間 + 排除時段）可以直接用 LINE 對話修改
 - [x] FR-009 每日行程提醒（v1.0 追加）：每天 09:00 由 n8n 觸發，列出當天行程並推播到 LINE
+- [x] FR-010 每週項目時間統計（v1.0 追加）：每週一 08:00 由 n8n 觸發，讀上週行程依標題分組加總時數，寫入 Google Sheet 並推播摘要到 LINE
