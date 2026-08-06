@@ -32,7 +32,7 @@ class Api::V1::SchedulesControllerTest < ActionDispatch::IntegrationTest
     assert_includes JSON.parse(response.body)["error"], "date"
   end
 
-  test "index with start_date/end_date only returns schedules in that range (used by n8n's weekly summary workflow)" do
+  test "index with start_date/end_date only returns schedules in that range" do
     in_range = Schedule.create!(title: "健身", start_time: Time.zone.parse("2026-08-04T17:00:00+08:00"), end_time: Time.zone.parse("2026-08-04T18:00:00+08:00"))
     Schedule.create!(title: "範圍外的行程", start_time: Time.zone.parse("2026-08-10T09:00:00+08:00"), end_time: Time.zone.parse("2026-08-10T10:00:00+08:00"))
 

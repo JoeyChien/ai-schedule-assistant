@@ -85,7 +85,7 @@ curl -X DELETE http://localhost:3000/api/v1/schedules/:id
 # 只查某一天的行程（給 n8n 的每日工作流程用，見下方「n8n 工作流程」）
 curl "http://localhost:3000/api/v1/schedules?date=2026-08-05"
 
-# 查某個日期區間的行程（給 n8n 的每週統計工作流程用，見下方「n8n 工作流程」）
+# 查某個日期區間的行程（通用區間查詢，目前沒有任何 n8n 工作流程在用，見下方「n8n 工作流程」）
 curl "http://localhost:3000/api/v1/schedules?start_date=2026-07-27&end_date=2026-08-02"
 ```
 
@@ -144,12 +144,13 @@ Gemini 會參考目前的設定值，把你這句話要求的異動跟原本沒�
 
 ## n8n 工作流程（每日行程提醒 / 每日摘要 / 每週項目時間統計，FR-007 / FR-009 / FR-010）
 
-每天 09:00 的「今日行程提醒」跟 23:00 的「每日摘要」這兩個通知，是用 n8n 排程觸發、呼叫 Rails 的 `GET /api/v1/schedules?date=...` 拿資料，摘要的部分再呼叫 Gemini，最後直接呼叫 LINE Push Message API 推播；每週一 08:00 的「每週項目時間統計」則是呼叫 `GET /api/v1/schedules?start_date=...&end_date=...` 拿上週的行程，依行程標題分組加總時數後寫進 Google Sheet，再推播一則摘要到 LINE——Rails 完全不參與這三個工作流程的觸發跟發送，只單純提供唯讀資料。
+每天 09:00 的「今日行程提醒」跟 23:00 的「每日摘要」這兩個通知，是用 n8n 排程觸發、呼叫 Rails 的 `GET /api/v1/schedules?date=...` 拿資料，摘要的部分再呼叫 Gemini，最後直接呼叫 LINE Push Message API 推播；每週一 08:00 的「每週項目時間統計」則**不經過 Rails**，是 n8n 直接呼叫 Google Calendar API 讀上週（`primary` 日曆上）的所有事件，依事件標題分組加總時數後寫進 Google Sheet，再推播一則摘要到 LINE。
 
-完整的節點設定（HTTP Request / Code / Google Sheets node 的程式碼）見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。之所以這樣分工：
+完整的節點設定（HTTP Request / Code / Google Calendar / Google Sheets node 的程式碼）見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。之所以這樣分工：
 
 - FR-005/006（找空檔自動排行程）留在 Rails，因為需要撞期檢查、空檔演算法這類「有狀態的業務邏輯」，比較適合寫程式碼、也比較好寫測試。
-- FR-007/FR-009/FR-010 這幾個「排程 → 讀資料 → （呼叫 AI）→ （寫 Google Sheets）→ 推播」的通知/報表，交給 n8n 編排，展示用 workflow 工具串接既有 API + LLM + 通訊軟體 + Google Sheets 的能力。
+- FR-007/FR-009 這兩個「排程 → 讀 Rails API → （呼叫 AI）→ 推播」的通知，交給 n8n 編排，展示用 workflow 工具串接既有 API + LLM + 通訊軟體的能力。
+- FR-010 這個週報表更進一步，連 Rails 都不經過，直接串 Google Calendar + Google Sheets 兩個外部服務，展示 n8n 也能完全獨立於自家後端、單純用「既有服務 A → 既有服務 B」的方式做資料整合。
 
 ## 常用維運指令
 

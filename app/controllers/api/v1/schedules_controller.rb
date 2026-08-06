@@ -2,8 +2,12 @@ module Api
   module V1
     class SchedulesController < ApplicationController
       # date 是給 n8n 這類外部排程呼叫用的，例如 ?date=2026-08-05 只回傳當天的行程；
-      # start_date/end_date 是給 n8n 每週統計工作流程用的區間查詢，例如 ?start_date=2026-07-27&end_date=2026-08-02；
+      # start_date/end_date 是通用的區間查詢，例如 ?start_date=2026-07-27&end_date=2026-08-02；
       # 都沒帶就維持原本「回傳全部」的行為
+      #
+      # 註：FR-010（每週項目時間統計）原本規劃呼叫這裡，後來 n8n 那條工作流程改成直接打
+      # Google Calendar API（見 docs/n8n_workflows.md 工作流程 C），不會再經過這個 endpoint；
+      # 這裡的 start_date/end_date 目前沒有任何呼叫端在用，先保留當通用能力。
       def index
         schedules = Schedule.order(start_time: :asc)
 

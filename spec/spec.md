@@ -146,7 +146,7 @@ LINE Reply
 
 上面這張圖是原始規劃，實際 v1.0 的 LINE 建立/修改/刪除/查詢行程（FR-001~004）**沒有經過 n8n**，是 LINE Webhook 直接打 Rails（`LineBotController` → `Schedules::CommandService`），Gemini/Google Calendar 都是 Rails 直接呼叫，理由是這條路徑有撞期檢查、自動排空檔這類需要「讀狀態、寫兩個系統（DB + Google Calendar）」的業務邏輯，用程式碼實作比較可靠，也比較好寫測試。
 
-n8n 實際承擔的是三個**對 Rails 唯讀、排程觸發**的工作流程（都不會寫入 Rails 的資料，只讀 Rails 提供的 API，再推播 LINE／寫進 Google Sheet），細節見 [docs/n8n_workflows.md](../docs/n8n_workflows.md)：
+n8n 實際承擔的是三個**排程觸發、不會寫入 Rails 資料**的工作流程（FR-007/FR-009 讀 Rails 提供的唯讀 API，FR-010 則完全不經過 Rails、直接讀 Google Calendar API，兩種都是「讀資料 → 推播 LINE／寫進 Google Sheet」，不會反過來修改任何系統的資料），細節見 [docs/n8n_workflows.md](../docs/n8n_workflows.md)：
 
 - 每日行程提醒（FR-009，09:00）
 - 每日摘要（FR-007，23:00，取代原本 Rails 自己排程觸發的方式）
@@ -421,19 +421,29 @@ LINE 推播。
 
 系統：
 
-- 讀取上週一～上週日的所有行程
-- 依行程標題（項目）分組，加總每個項目的時數
+- 直接讀取 Google Calendar（`primary` 日曆）上上週一～上週日的所有事件
+- 依事件標題（項目）分組，加總每個項目的時數
 - 寫入 Google Sheet 累積統計
 - LINE 推播本週統計已更新、附上時數前幾名的項目
 
 ### Output（Google Sheet 新增/更新的列）
+
+有行程的一週：
 
 | 週期 | 項目 | 總時數 | 行程數 |
 | --- | --- | --- | --- |
 | 2026-07-27 ~ 2026-08-02 | 健身 | 3.5 | 3 |
 | 2026-07-27 ~ 2026-08-02 | 閱讀 | 2.0 | 4 |
 
+完全沒有行程的一週，固定寫入一列「無」，而不是留空或整週跳過不寫：
+
+| 週期 | 項目 | 總時數 | 行程數 |
+| --- | --- | --- | --- |
+| 2026-08-03 ~ 2026-08-09 | 無 | 0 | 0 |
+
 ### Output（LINE 推播）
+
+有行程：
 
 ```
 📊 上週（2026-07-27 ~ 2026-08-02）時間統計已更新到 Google Sheet
@@ -441,12 +451,20 @@ LINE 推播。
 🏆 閱讀：2.0 小時（4 筆）
 ```
 
+沒有行程：
+
+```
+📊 上週（2026-08-03 ~ 2026-08-09）沒有任何行程紀錄，上週無行程。
+```
+
 ### 實作備註
 
-- 完全由 n8n 負責（見 [docs/n8n_workflows.md](../docs/n8n_workflows.md) 工作流程 C），Rails 沒有對應的 Job；只擴充既有的 `GET /api/v1/schedules`，新增 `start_date`/`end_date` 區間查詢參數（原本只支援單日 `date`），讓 n8n 一次拿到整週的資料，分組加總、寫 Google Sheet、組 LINE 訊息都在 n8n 節點裡完成。
-- 目前 `Schedule` 資料表沒有獨立的「項目／分類」欄位（見十一、資料模型 `Calendar Event` 的 `category`，v1.0 尚未實作），這裡直接把行程的 `title` 當作項目名稱分組；日後如果真的加上 `category` 欄位，只要改 n8n 的分組欄位即可，Rails API 不用變。
+- 完全由 n8n 負責（見 [docs/n8n_workflows.md](../docs/n8n_workflows.md) 工作流程 C），Rails 完全不參與——沒有對應的 Job，也不提供任何 API 給這個工作流程呼叫。n8n 用內建的 Google Calendar node（`Get Many`，開 `Single Events` 展開重複事件）直接讀 `primary` 日曆上的事件，分組加總、寫 Google Sheet、組 LINE 訊息都在 n8n 節點裡完成。這點跟 FR-007/FR-009 不一樣：那兩個還是會呼叫 Rails 的 `GET /api/v1/schedules?date=...` 拿資料，FR-010 是三個工作流程裡唯一完全繞過 Rails 的。
+- **資料來源包含手動加的日曆事件，不只是這個系統建立的行程**：因為讀的是 Google Calendar 本身而不是 Rails 的 `Schedule` 資料表，統計範圍會是「`primary` 日曆上實際發生的所有事件」，使用者自己手動加、不是透過這個系統建立的行程也會被算進去。這是刻意的選擇，為了讓每週時間統計反映真實的時間分配全貌，不只是這個系統管理的那一部分。
+- 目前 Google Calendar 事件沒有獨立的「項目／分類」欄位（見十一、資料模型 `Calendar Event` 的 `category`，v1.0 尚未實作），這裡直接把事件的 `summary`（標題）當作項目名稱分組。
 - 寫入 Google Sheet 用「Append or Update」，以「週期＋項目」兩欄當比對鍵，同一週重跑不會產生重複列。
-- 如果上週完全沒有任何行程，n8n 那條分支不會有資料可以往下傳，不會新增空白列、也不會推播 LINE（demo 用途，刻意不特別處理這個邊界情況）。
+- **上週完全沒有事件時，不會整條工作流程跳過不寫**：分組加總的 Code node 一律輸出至少 1 個 item，沒有事件就固定輸出 1 筆 `項目="無"`、`總時數=0`、`行程數=0`，讓 Google Sheet 跟 LINE 都清楚看到「這週有統計過、結果是 0」，後面的 Google Sheets／LINE node 不需要額外判斷要不要執行；同一個 Code node 也會過濾掉沒有 `summary`／明確起訖時間的事件（例如全天事件只有 `date` 沒有 `dateTime`），避免不完整的資料被誤當成一筆有效紀錄混進統計。
+- 這個功能原本的第一版是讀 Rails 的 `GET /api/v1/schedules`，為此在 Rails 端加了 `start_date`/`end_date` 區間查詢參數；後來改成直接讀 Google Calendar API 之後，這個區間查詢就沒有任何呼叫端在用了。討論後決定先保留它當作 `Schedule` API 的通用能力（不影響其他功能），沒有回頭刪掉。
 
 ---
 
@@ -673,7 +691,7 @@ LINE
 ```
 Cron（每週一）
 ↓
-讀取上週行程（區間查詢）
+直接讀取 Google Calendar 上週事件
 ↓
 依項目分組加總時數
 ↓
