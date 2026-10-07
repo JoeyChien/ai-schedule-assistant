@@ -1,6 +1,8 @@
 module Schedules
   # 接收使用者的一句話，解析意圖後派發給對應的 CRUD service，
   # 回傳可直接回覆給使用者（例如 LINE）的結果。
+  # 一句話可能包含多筆不同的行程指示（分行寫，或用「還有」連接在一起），
+  # 每一筆各自獨立處理、獨立成功或失敗，不會因為其中一筆出錯就整批放棄。
   class CommandService
     Result = Struct.new(:reply_text, :schedule, keyword_init: true)
 
@@ -23,8 +25,26 @@ module Schedules
     end
 
     def call(message)
-      parsed_intent = @parser.parse(message)
+      parsed_intents = begin
+        @parser.parse_all(message)
+      rescue Ai::ResponseParser::ParseError => e
+        Rails.logger.error("[Schedules::CommandService] #{e.message}")
+        return Result.new(reply_text: parse_error_reply, schedule: nil)
+      rescue Ai::GeminiService::RequestError => e
+        Rails.logger.error("[Schedules::CommandService] #{e.message}")
+        return Result.new(reply_text: ai_unavailable_reply, schedule: nil)
+      end
 
+      results = parsed_intents.map { |parsed_intent| dispatch(parsed_intent) }
+
+      return results.first if results.one?
+
+      Result.new(reply_text: combined_reply(results), schedule: nil)
+    end
+
+    private
+
+    def dispatch(parsed_intent)
       case parsed_intent.action
       when "CREATE"
         schedule = @creation_service.create(parsed_intent)
@@ -48,12 +68,6 @@ module Schedules
       else
         Result.new(reply_text: unsupported_reply, schedule: nil)
       end
-    rescue Ai::ResponseParser::ParseError => e
-      Rails.logger.error("[Schedules::CommandService] #{e.message}")
-      Result.new(reply_text: parse_error_reply, schedule: nil)
-    rescue Ai::GeminiService::RequestError => e
-      Rails.logger.error("[Schedules::CommandService] #{e.message}")
-      Result.new(reply_text: ai_unavailable_reply, schedule: nil)
     rescue Finder::NotFound => e
       Result.new(reply_text: e.message, schedule: nil)
     rescue ConflictChecker::ConflictError => e
@@ -67,7 +81,9 @@ module Schedules
       Result.new(reply_text: calendar_error_reply, schedule: nil)
     end
 
-    private
+    def combined_reply(results)
+      results.each_with_index.map { |result, index| "#{index + 1}. #{result.reply_text}" }.join("\n\n")
+    end
 
     def created_reply(schedule)
       "✅ 已為您安排行程：\n📌 #{schedule.title}\n⏰ #{format_time(schedule.start_time)}"

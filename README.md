@@ -1,6 +1,6 @@
 # AI Schedule Assistant
 
-透過 LINE 傳一句話（例如「明天下午五點健身」），由 Gemini 解析意圖後自動操作 Google Calendar 的智慧排程助理。核心 CRUD/撞期檢查/自動排空檔都是 Rails 本身處理，兩個每日通知（早上行程提醒、晚上摘要）跟一個每週項目時間統計，則是用 n8n 排程串接 Rails API + Gemini + LINE + Google Sheets，見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。完整規格見 [spec/spec.md](spec/spec.md)。
+透過 LINE 傳一句話（例如「明天下午五點健身」），由 Gemini 解析意圖後自動操作 Google Calendar 的智慧排程助理。核心 CRUD/撞期檢查/自動排空檔都是 Rails 本身處理，兩個每日通知（早上行程提醒、晚上摘要）是用 n8n 排程串接 Rails API + Gemini + LINE，每週項目時間統計則是 n8n 直接串 Google Calendar API + Google Sheets + LINE（不經過 Rails），見 [docs/n8n_workflows.md](docs/n8n_workflows.md)。完整規格見 [spec/spec.md](spec/spec.md)。
 
 ## 環境需求
 
@@ -59,7 +59,7 @@ bin/dev
 ### 1. 跑自動化測試（不需要任何金鑰）
 
 ```bash
-bin/rails test          # model/service/job 測試，涵蓋建立/修改/刪除/查詢/撞期檢查/自動排空檔/排程設定/每日排程/每日摘要/找不到行程/AI 解析失敗/Google API 錯誤
+bin/rails test          # model/service/job 測試，涵蓋建立/修改/刪除/查詢/撞期檢查/自動排空檔/排程設定/一次多筆行程/每日排程/每日摘要/找不到行程/AI 解析失敗/Google API 錯誤
 bin/rubocop              # 風格檢查
 bin/brakeman --no-pager  # 資安掃描
 bin/rails zeitwerk:check # 確認所有 class/module 都能正確 autoload
@@ -112,6 +112,7 @@ curl -X POST http://localhost:3000/api/v1/schedules/parse \
    - 「把可排程時間改成9點到21點，午休改成12:30到13:30」→ 修改自動排程設定（見下方「自動排程設定」說明）
    - 「這週找時間安排兩次閱讀1小時」→ FR-005：一次排多個、跨天找空檔（判斷依據是有沒有提到「幾次」或一個範圍如「這週」，只排一次的還是走上面的自動排空檔）；如果整個範圍都排不滿，回覆會明講排了幾次、還差幾次。也支援「下週」（下週一到下週日整週）
    - 找空檔一律不會排到已經過去的時間；如果是排今天，也會自動避開「現在往後 1 小時內」，避免排一個來不及準備、甚至已經過去的時間點
+   - 一次訊息可以包含多筆不同的行程（FR-011），例如分兩行寫「今天晚上8點整理履歷」「今天晚上9點慢跑」，或寫成一行「今天晚上9點慢跑還有10點閱讀」；每一筆會各自獨立建立/修改/刪除，回覆會合併成一則訊息、每筆前面加編號，其中一筆撞期或出錯也不會擋住其他筆
 4. 第一次跟機器人說話後，server log 會印出 `[LineBotController] message from user_id=Uxxxx...`，把這個值存進 `credentials.line.user_id`，才能收到下面第 5 點的主動推播
 
 ### 5. 測試每日固定行程（FR-006，Rails 自己的排程）
@@ -174,3 +175,4 @@ RAILS_ENV=test bin/rails db:migrate  # 測試資料庫也要套用
 - [x] FR-008 自動排程設定（v1.0 追加）：沒給明確時間的行程自動找空檔排入，空檔範圍（可排程時間 + 排除時段）可以直接用 LINE 對話修改
 - [x] FR-009 每日行程提醒（v1.0 追加）：每天 09:00 由 n8n 觸發，列出當天行程並推播到 LINE
 - [x] FR-010 每週項目時間統計（v1.0 追加）：每週一 08:00 由 n8n 觸發，讀上週行程依標題分組加總時數，寫入 Google Sheet 並推播摘要到 LINE
+- [x] FR-011 一次訊息輸入多筆行程（v1.0 追加）：分行寫或用「還有」連接的多筆指示會各自獨立處理，回覆合併成一則訊息

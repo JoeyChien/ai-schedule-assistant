@@ -5,13 +5,14 @@ class Schedules::CommandServiceTest < ActiveSupport::TestCase
   setup { travel_to(Time.zone.parse("2026-08-01T09:00:00+08:00")) }
   teardown { travel_back }
 
+  # intent 可以是單一個 ParsedIntent，也可以是多個（模擬一次訊息包含多筆行程指示）
   FakeParser = Struct.new(:intent) do
-    def parse(_message) = intent
+    def parse_all(_message) = Array(intent)
   end
 
   class RaisingParser
     def initialize(error) = @error = error
-    def parse(_message) = raise(@error)
+    def parse_all(_message) = raise(@error)
   end
 
   def build_service(intent:, calendar: FakeGoogleCalendarService.new)
@@ -186,6 +187,47 @@ class Schedules::CommandServiceTest < ActiveSupport::TestCase
 
     assert_includes result.reply_text, "剩下 2 次"
     assert_equal 0, Schedule.where(title: "閱讀").count
+  end
+
+  test "a message with multiple schedule instructions creates each one and numbers the combined reply" do
+    intents = [
+      ParsedIntent.new(action: "CREATE", title: "整理履歷", start_time: Time.zone.parse("2026-08-01T20:00:00+08:00")),
+      ParsedIntent.new(action: "CREATE", title: "慢跑", start_time: Time.zone.parse("2026-08-01T21:00:00+08:00"))
+    ]
+
+    result = build_service(intent: intents).call("今天晚上8點整理履歷\n今天晚上9點慢跑")
+
+    assert_includes result.reply_text, "1. "
+    assert_includes result.reply_text, "整理履歷"
+    assert_includes result.reply_text, "2. "
+    assert_includes result.reply_text, "慢跑"
+    assert_nil result.schedule
+    assert_equal 2, Schedule.where(title: [ "整理履歷", "慢跑" ]).count
+  end
+
+  test "a message with multiple schedule instructions handles each independently, so one conflict doesn't block the others" do
+    Schedule.create!(title: "看中醫", start_time: Time.zone.parse("2026-08-01T21:00:00+08:00"), end_time: Time.zone.parse("2026-08-01T21:30:00+08:00"))
+    intents = [
+      ParsedIntent.new(action: "CREATE", title: "慢跑", start_time: Time.zone.parse("2026-08-01T21:00:00+08:00")),
+      ParsedIntent.new(action: "CREATE", title: "閱讀", start_time: Time.zone.parse("2026-08-01T22:00:00+08:00"))
+    ]
+
+    result = build_service(intent: intents).call("今天晚上9點慢跑還有10點閱讀")
+
+    assert_includes result.reply_text, "撞期"
+    assert_includes result.reply_text, "已為您安排行程"
+    assert_includes result.reply_text, "閱讀"
+    assert_equal 0, Schedule.where(title: "慢跑").count # 撞期被擋下，不會建立
+    assert_equal 1, Schedule.where(title: "閱讀").count
+  end
+
+  test "a single-item array behaves exactly like the old single-intent path (same Result, no numbering)" do
+    intent = ParsedIntent.new(action: "CREATE", title: "健身", start_time: Time.zone.parse("2026-08-05T17:00:00+08:00"))
+
+    result = build_service(intent: [ intent ]).call("明天下午五點健身")
+
+    assert_equal "✅ 已為您安排行程：\n📌 健身\n⏰ 08/05 17:00", result.reply_text
+    assert_equal "健身", result.schedule.title
   end
 
   test "a Gemini parsing error replies with the spec's guidance message" do

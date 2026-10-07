@@ -217,7 +217,7 @@ const isEmptyWeek = rows.length === 1 && rows[0].項目 === "無" && rows[0].行
 const message = isEmptyWeek
   ? `📊 上週（${weekLabel}）沒有任何行程紀錄，上週無行程。`
   : `📊 上週（${weekLabel}）時間統計已更新到 Google Sheet\n${
-      rows.slice(0, 3).map(r => `🏆 ${r.項目}：${r.總時數} 小時（${r.行程數} 筆）`).join("\n")
+      rows.map(r => `🏆 ${r.項目}：${r.總時數} 小時（${r.行程數} 筆）`).join("\n")
     }`;
 
 return [{ json: { message } }];
